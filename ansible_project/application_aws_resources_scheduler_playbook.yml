@@ -1,0 +1,1914 @@
+- import_playbook: fact_gatherer_playbook.yml
+  tags:
+    - facts
+
+- import_playbook: aws_service_discovery_route53_playbook.yml
+  tags:
+    - facts
+ 
+
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - playbook_vars/{{ global_var_environment }}/global_vars.yml
+    - playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault  
+    - playbook_vars/{{ global_var_environment }}/application_core_vars.yml
+    - playbook_vars/{{ global_var_environment }}/application_cardhandler_vars.yml
+    - playbook_vars/{{ global_var_environment }}/application_marketplace_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_keycloak_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_kowribusiness_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_messenger_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_metabase_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_notification_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_posapi_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_scheduler_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_securecardhandler_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_securecore_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_templateengine_server_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_ussd_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_webpos_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_kowribusiness_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_kowriexperimentalcore_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_kowrimarketplace_vars.yml 
+    - playbook_vars/{{ global_var_environment }}/application_bulkprocessor_vars.yml
+    - playbook_vars/{{ global_var_environment }}/application_kb_integration_umbapi_vars.yml
+    - playbook_vars/{{ global_var_environment }}/application_kbwebcheckout_vars.yml
+  vars:
+    locally_defined_sleep_time: "00 18 ? * MON-FRI *"
+    locally_defined_wake_time:  "30 06 ? * MON-FRI *"
+    # locally_defined_ec2_off_time_tag: "weekdays-2am-5pm"
+    locally_defined_ec2_off_time_tag: "weekdays-6am-8pm"
+  tasks:
+
+
+    - name: Obtaining facts from jumpbox 
+      ec2_instance_info:
+        region: "{{ global_var_ird_region }}"
+        filters: 
+          "tag:Name": "{{ global_var_country_code }}-{{ global_var_product }}-{{ global_var_environment }}-jumpbox"
+      register: reg_uat_jumpbox_info
+
+    # - debug: var=reg_uat_jumpbox_info.instances.0.tags
+
+    - name: Obtaining facts from mongo instance ireland
+      ec2_instance_info:
+        region: "{{ global_var_ird_region }}"
+        filters: 
+          "tag:Name": "{{ global_var_country_code }}-{{ global_var_product }}-{{ global_var_environment }}-mongo"
+      register: reg_uat_mongo_ird_info
+    # - debug: var=reg_jumpbox_facts
+
+    - name: Obtaining facts from mysql instance 
+      ec2_instance_info:
+        region: "{{ global_var_ird_region }}"
+        filters: 
+          "tag:Name": "{{ global_var_country_code }}-{{ global_var_product }}-{{ global_var_environment }}-mysql"
+      register: reg_uat_mysql_ird_info
+    # - debug: var=reg_jumpbox_facts
+    
+    - name: Creating empty list
+      set_fact:
+        reg_uat_instances: []
+
+    - name: Merging all instances info
+      set_fact:
+        reg_uat_instances: "{{ reg_uat_instances + [item] }}"
+      with_items:
+        - "{{ reg_uat_jumpbox_info.instances | list }}"
+        - "{{ reg_uat_mongo_ird_info.instances | list }}"
+        - "{{ reg_uat_mysql_ird_info.instances | list }}"
+
+    # - debug: var=reg_uat_instances
+
+    - name: extracting instance id
+      set_fact:
+        reg_instance_ids: "{{ reg_uat_instances | map(attribute='instance_id') | list }}"
+
+    # - debug: var=reg_instance_ids 
+
+    # - name: Removing Schedule tag 
+    #   amazon.aws.ec2_tag:
+    #     region: eu-west-1
+    #     resource: "{{ item }}"
+    #     state: absent
+    #     tags:
+    #       Schedule:
+    #   loop: "{{ reg_instance_ids }}"   
+
+
+    - name: Ensure Schedule tag 
+      amazon.aws.ec2_tag:
+        region: eu-west-1
+        resource: "{{ item }}"
+        state: present
+        tags:
+          Schedule: "{{ locally_defined_ec2_off_time_tag }}"
+      loop: "{{ reg_instance_ids }}" 
+
+    # - name: Starting EC2 instances 
+    #   amazon.aws.ec2:
+    #     region: eu-west-1
+    #     instance_ids: "{{ item }}"
+    #     state: running
+    #   loop: "{{ reg_instance_ids }}" 
+
+    
+     
+
+#    - name: Billbox Core || Creating a Sleep Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_core_service_name }}-off-time
+#          --schedule "cron({{ bb_core_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_core_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_core_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Core || AWSCLI || Creating a Sleep Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_core_service_name }}-off-time
+#          --schedule "cron({{ bb_core_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_core_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_core_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Core || Creating a Wake Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_core_service_name }}-wake-time
+#          --schedule "cron({{ bb_core_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_core_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_core_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Core || AWSCLI || Creating a Wake Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_core_service_name }}-wake-time
+#          --schedule "cron({{ bb_core_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_core_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_core_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox CardHandler || Creating a Sleep Time scheduled application autoscalling for Billbox CardHandler
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_cardhandler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_cardhandler_service_name }}-off-time
+#          --schedule "cron({{ bb_cardhandler_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_cardhandler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_cardhandler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_cardhandler_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox CardHandler Server || AWSCLI || Creating a Sleep Time scheduled application autoscalling for Billbox CardHandler with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_cardhandler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_cardhandler_service_name }}-off-time
+#          --schedule "cron({{ bb_cardhandler_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_cardhandler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_cardhandler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_cardhandler_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox CardHandler || Creating a Wake Time scheduled application autoscalling for Billbox CardHandler
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_cardhandler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_cardhandler_service_name }}-wake-time
+#          --schedule "cron({{ bb_cardhandler_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_cardhandler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_cardhandler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_cardhandler_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox CardHandler || AWSCLI || Creating a Wake Time scheduled application autoscalling for Billbox CardHandler
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_cardhandler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_cardhandler_service_name }}-wake-time
+#          --schedule "cron({{ bb_cardhandler_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_cardhandler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_cardhandler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_cardhandler_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Keycloak || Creating a Sleep Time scheduled application autoscalling for Billbox keycloak
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_keycloak_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_keycloak_service_name }}-off-time
+#          --schedule "cron({{ bb_keycloak_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_keycloak_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_keycloak_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_keycloak_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox keycloak Server || AWSCLI ||Creating a Sleep Time scheduled application autoscalling for Billbox keycloak with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_keycloak_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_keycloak_service_name }}-off-time
+#          --schedule "cron({{ bb_keycloak_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_keycloak_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_keycloak_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_keycloak_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Keycloak || Creating a Wake Time scheduled application autoscalling for Billbox keycloak
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_keycloak_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_keycloak_service_name }}-wake-time
+#          --schedule "cron({{ bb_keycloak_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_keycloak_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_keycloak_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_keycloak_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox keycloak Server || AWSCLI || Creating a Wake Time scheduled application autoscalling for Billbox keycloak with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_keycloak_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_keycloak_service_name }}-wake-time
+#          --schedule "cron({{ bb_keycloak_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_keycloak_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_keycloak_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_keycloak_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Marketplace || Creating a Sleep Time scheduled application autoscalling for Billbox Marketplace
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_marketplace_service_name }}-off-time
+#          --schedule "cron({{ bb_marketplace_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_marketplace_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_marketplace_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_marketplace_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox Marketplace Server || AWSCLI || Creating a Sleep Time scheduled application autoscalling for Billbox Marketplace with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_marketplace_service_name }}-off-time
+#          --schedule "cron({{ bb_marketplace_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_marketplace_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_marketplace_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_marketplace_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Marketplace || Creating a Wake Time scheduled application autoscalling for Billbox Marketplace
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_marketplace_service_name }}-wake-time
+#          --schedule "cron({{ bb_marketplace_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_marketplace_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_marketplace_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_marketplace_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox Marketplace Server || AWSCLI || Creating a Wake Time scheduled application autoscalling for Billbox Marketplace with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_marketplace_service_name }}-wake-time
+#          --schedule "cron({{ bb_marketplace_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_marketplace_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_marketplace_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_marketplace_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Business || Creating a Sleep Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Business || Creating a Sleep Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Business || Creating a Wake Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Business || Creating a Wake Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Messenger || Creating a Sleep Time scheduled application autoscalling for Billbox Messenger
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_messenger_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_messenger_service_name }}-off-time
+#          --schedule "cron({{ bb_messenger_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_messenger_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_messenger_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_messenger_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Messenger Server || Creating a Sleep Time scheduled application autoscalling for Billbox Messenger with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_messenger_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_messenger_service_name }}-off-time
+#          --schedule "cron({{ bb_messenger_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_messenger_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_messenger_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_messenger_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Messenger || Creating a Wake Time scheduled application autoscalling for Billbox Messenger
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_messenger_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_messenger_service_name }}-wake-time
+#          --schedule "cron({{ bb_messenger_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_messenger_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_messenger_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_messenger_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Messenger Server || Creating a Wake Time scheduled application autoscalling for Billbox Messenger with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_messenger_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_messenger_service_name }}-wake-time
+#          --schedule "cron({{ bb_messenger_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_messenger_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_messenger_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_messenger_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#
+#    - name: Billbox Metabase || Creating a Sleep Time scheduled application autoscalling for Billbox Metabase
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_metabase_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_metabase_service_name }}-off-time
+#          --schedule "cron({{ bb_metabase_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_metabase_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_metabase_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_metabase_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Metabase Server || Creating a Sleep Time scheduled application autoscalling for Billbox Metabase with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_metabase_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_metabase_service_name }}-off-time
+#          --schedule "cron({{ bb_metabase_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_metabase_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_metabase_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_metabase_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Metabase || Creating a Wake Time scheduled application autoscalling for Billbox Metabase
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_metabase_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_metabase_service_name }}-wake-time
+#          --schedule "cron({{ bb_metabase_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_metabase_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_metabase_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_metabase_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Metabase Server || Creating a Wake Time scheduled application autoscalling for Billbox Metabase with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_metabase_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_metabase_service_name }}-wake-time
+#          --schedule "cron({{ bb_metabase_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_metabase_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_metabase_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_metabase_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox LNS || Creating a Sleep Time scheduled application autoscalling for Billbox LNS
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_notification_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_notification_service_name }}-off-time
+#          --schedule "cron({{ bb_notification_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_notification_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_notification_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_notification_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox LNS Server || Creating a Sleep Time scheduled application autoscalling for Billbox LNS with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_notification_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_notification_service_name }}-off-time
+#          --schedule "cron({{ bb_notification_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_notification_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_notification_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_notification_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox LNS || Creating a Wake Time scheduled application autoscalling for Billbox LNS
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_notification_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_notification_service_name }}-wake-time
+#          --schedule "cron({{ bb_notification_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_notification_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_notification_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_notification_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox LNS Server || Creating a Wake Time scheduled application autoscalling for Billbox LNS with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_notification_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_notification_service_name }}-wake-time
+#          --schedule "cron({{ bb_notification_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_notification_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_notification_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_notification_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox POSAPI || Creating a Sleep Time scheduled application autoscalling for Billbox POSAPI
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_posapi_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_posapi_service_name }}-off-time
+#          --schedule "cron({{ bb_posapi_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_posapi_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_posapi_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_posapi_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox POSAPI Server || Creating a Sleep Time scheduled application autoscalling for Billbox POSAPI with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_posapi_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_posapi_service_name }}-off-time
+#          --schedule "cron({{ bb_posapi_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_posapi_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_posapi_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_posapi_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox POSAPI || Creating a Wake Time scheduled application autoscalling for Billbox POSAPI
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_posapi_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_posapi_service_name }}-wake-time
+#          --schedule "cron({{ bb_posapi_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_posapi_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_posapi_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_posapi_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox POSAPI Server || Creating a Wake Time scheduled application autoscalling for Billbox POSAPI with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_posapi_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_posapi_service_name }}-wake-time
+#          --schedule "cron({{ bb_posapi_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_posapi_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_posapi_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_posapi_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Scheduler || Creating a Sleep Time scheduled application autoscalling for Billbox Scheduler
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_scheduler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_scheduler_service_name }}-off-time
+#          --schedule "cron({{ bb_scheduler_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_scheduler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_scheduler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_scheduler_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Scheduler Server || Creating a Sleep Time scheduled application autoscalling for Billbox Scheduler with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_scheduler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_scheduler_service_name }}-off-time
+#          --schedule "cron({{ bb_scheduler_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_scheduler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_scheduler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_scheduler_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox Scheduler || Creating a Wake Time scheduled application autoscalling for Billbox Scheduler
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_scheduler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_scheduler_service_name }}-wake-time
+#          --schedule "cron({{ bb_scheduler_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_scheduler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_scheduler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_scheduler_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox Scheduler Server || Creating a Wake Time scheduled application autoscalling for Billbox Scheduler with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_scheduler_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_scheduler_service_name }}-wake-time
+#          --schedule "cron({{ bb_scheduler_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_scheduler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_scheduler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_scheduler_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#
+#    # - name: Billbox Secure CardHandler || Creating a Sleep Time scheduled application autoscalling for Billbox Secure CardHandler
+#    #   shell: >
+#    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+#    #       --scalable-dimension ecs:service:DesiredCount
+#    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecardhandler_service_name }}
+#    #       --scheduled-action-name scheduled-gh-office-{{ bb_securecardhandler_service_name }}-off-time
+#    #       --schedule "cron({{ bb_securecardhandler_service_sleep_cron | default(locally_defined_wake_time) }})"
+#    #       --scalable-target-action MinCapacity={{ bb_securecardhandler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_securecardhandler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#    #       --region {{ global_var_ecs_region }}
+#    #       --profile {{ lookup('env','AWS_PROFILE') }}
+#    #   when:
+#    #     - global_awx_ad_hoc_shell_switch is defined
+#    #     - not global_awx_ad_hoc_shell_switch
+#    #     # - bb_securecardhandler_service_scheduled_autoscalling | default(false)
+#    #     - global_auto_turnoff
+#
+#    # - name: Billbox Secure CardHandler Server || Creating a Sleep Time scheduled application autoscalling for Billbox Secure CardHandler with awscli
+#    #   shell: >
+#    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+#    #       --scalable-dimension ecs:service:DesiredCount
+#    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecardhandler_service_name }}
+#    #       --scheduled-action-name scheduled-gh-office-{{ bb_securecardhandler_service_name }}-off-time
+#    #       --schedule "cron({{ bb_securecardhandler_service_sleep_cron | default(locally_defined_wake_time) }})"
+#    #       --scalable-target-action MinCapacity={{ bb_securecardhandler_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_securecardhandler_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#    #       --region {{ global_var_ecs_region }}
+#    #   when:
+#    #     - global_awx_ad_hoc_shell_switch is defined
+#    #     - global_awx_ad_hoc_shell_switch
+#    #     # - bb_securecardhandler_service_scheduled_autoscalling | default(false)
+#    #     - global_auto_turnoff
+#    #   environment:
+#    #     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#    #     AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    # - name: Billbox Secure CardHandler || Creating a Wake Time scheduled application autoscalling for Billbox Secure CardHandler
+#    #   shell: >
+#    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+#    #       --scalable-dimension ecs:service:DesiredCount
+#    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecardhandler_service_name }}
+#    #       --scheduled-action-name scheduled-gh-office-{{ bb_securecardhandler_service_name }}-wake-time
+#    #       --schedule "cron({{ bb_securecardhandler_service_wake_cron | default(locally_defined_wake_time) }})"
+#    #       --scalable-target-action MinCapacity={{ bb_securecardhandler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_securecardhandler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#    #       --region {{ global_var_ecs_region }}
+#    #       --profile {{ lookup('env','AWS_PROFILE') }}
+#    #   when:
+#    #     - global_awx_ad_hoc_shell_switch is defined
+#    #     - not global_awx_ad_hoc_shell_switch
+#    #     # - bb_securecardhandler_service_scheduled_autoscalling | default(false)
+#    #     - global_auto_turnoff
+#
+#    # - name: Billbox Secure CardHandler || Creating a Wake Time scheduled application autoscalling for Billbox Secure CardHandler
+#    #   shell: >
+#    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+#    #       --scalable-dimension ecs:service:DesiredCount
+#    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecardhandler_service_name }}
+#    #       --scheduled-action-name scheduled-gh-office-{{ bb_securecardhandler_service_name }}-wake-time
+#    #       --schedule "cron({{ bb_securecardhandler_service_wake_cron | default(locally_defined_wake_time) }})"
+#    #       --scalable-target-action MinCapacity={{ bb_securecardhandler_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_securecardhandler_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#    #       --region {{ global_var_ecs_region }}
+#    #   when:
+#    #     - global_awx_ad_hoc_shell_switch is defined
+#    #     - global_awx_ad_hoc_shell_switch
+#    #     # - bb_securecardhandler_service_scheduled_autoscalling | default(false)
+#    #     - global_auto_turnoff
+#    #   environment:
+#    #     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#    #     AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Billbox SecureCore || Creating a Sleep Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecore_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_securecore_service_name }}-off-time
+#          --schedule "cron({{ bb_securecore_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_securecore_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_securecore_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_securecore_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox SecureCore || Creating a Sleep Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecore_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_securecore_service_name }}-off-time
+#          --schedule "cron({{ bb_securecore_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_securecore_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_securecore_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_securecore_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox SecureCore || Creating a Wake Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecore_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_securecore_service_name }}-wake-time
+#          --schedule "cron({{ bb_securecore_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_securecore_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_securecore_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_securecore_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox SecureCore || Creating a Wake Time scheduled application autoscalling for Billbox Core
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_securecore_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_securecore_service_name }}-wake-time
+#          --schedule "cron({{ bb_securecore_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_securecore_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_securecore_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_securecore_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: templateengine || Creating a Sleep Time scheduled application autoscalling for templateengine
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_templateengine_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_templateengine_service_name }}-off-time
+#          --schedule "cron({{ bb_templateengine_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_templateengine_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_templateengine_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_templateengine_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: templateengine Server || Creating a Sleep Time scheduled application autoscalling for templateengine with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_templateengine_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_templateengine_service_name }}-off-time
+#          --schedule "cron({{ bb_templateengine_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_templateengine_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_templateengine_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_templateengine_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: templateengine || Creating a Wake Time scheduled application autoscalling for templateengine
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_templateengine_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_templateengine_service_name }}-wake-time
+#          --schedule "cron({{ bb_templateengine_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_templateengine_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_templateengine_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_templateengine_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: templateengine Server || Creating a Wake Time scheduled application autoscalling for templateengine with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_templateengine_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_templateengine_service_name }}-wake-time
+#          --schedule "cron({{ bb_templateengine_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_templateengine_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_templateengine_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_templateengine_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: ussd || Creating a Sleep Time scheduled application autoscalling for ussd
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-off-time
+#          --schedule "cron({{ bb_ussd_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity=0,MaxCapacity=0
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_ussd_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: ussd Server || Creating a Sleep Time scheduled application autoscalling for ussd with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-off-time
+#          --schedule "cron({{ bb_ussd_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity=0,MaxCapacity=0
+#          --region {{ bb_active_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_ussd_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: ussd || Creating a Wake Time scheduled application autoscalling for ussd
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-wake-time
+#          --schedule "cron({{ bb_ussd_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ bb_active_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_ussd_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: ussd Server || Creating a Wake Time scheduled application autoscalling for ussd with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-wake-time
+#          --schedule "cron({{ bb_ussd_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ bb_active_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_ussd_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox WebPOS || Creating a Sleep Time scheduled application autoscalling for Billbox WebPOS
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_webpos_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_webpos_service_name }}-off-time
+#          --schedule "cron({{ bb_webpos_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_webpos_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_webpos_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_webpos_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox WebPOS Server || Creating a Sleep Time scheduled application autoscalling for Billbox WebPOS with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_webpos_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_webpos_service_name }}-off-time
+#          --schedule "cron({{ bb_webpos_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_webpos_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_webpos_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_webpos_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Billbox WebPOS || Creating a Wake Time scheduled application autoscalling for Billbox WebPOS
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_webpos_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_webpos_service_name }}-wake-time
+#          --schedule "cron({{ bb_webpos_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_webpos_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_webpos_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_webpos_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Billbox WebPOS Server || Creating a Wake Time scheduled application autoscalling for Billbox WebPOS with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_webpos_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ bb_webpos_service_name }}-wake-time
+#          --schedule "cron({{ bb_webpos_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_webpos_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_webpos_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_webpos_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Kowri Business || Creating a Sleep Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Business || Creating a Sleep Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Business || Creating a Wake Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Business || Creating a Wake Time scheduled application autoscalling for kowribusiness
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Kowri Experimental Core || Creating a Sleep Time scheduled application autoscalling for kowriexperimentalcore
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_experimental_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_experimental_core_service_name }}-off-time
+#          --schedule "cron({{ kowri_experimental_core_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_experimental_core_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_experimental_core_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_experimental_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Experimental Core || Creating a Sleep Time scheduled application autoscalling for kowriexperimentalcore
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_experimental_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_experimental_core_service_name }}-off-time
+#          --schedule "cron({{ kowri_experimental_core_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_experimental_core_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_experimental_core_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_experimental_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Experimental Core || Creating a Wake Time scheduled application autoscalling for kowriexperimentalcore
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_experimental_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_experimental_core_service_name }}-wake-time
+#          --schedule "cron({{ kowri_experimental_core_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_experimental_core_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_experimental_core_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_experimental_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Experimental Core || Creating a Wake Time scheduled application autoscalling for kowriexperimentalcore
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_experimental_core_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_experimental_core_service_name }}-wake-time
+#          --schedule "cron({{ kowri_experimental_core_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_experimental_core_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_experimental_core_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_experimental_core_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#
+#    - name: KOWRI Marketplace || Creating a Sleep Time scheduled application autoscalling for Billbox Marketplace
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_marketplace_service_name }}-off-time
+#          --schedule "cron({{ kowri_marketplace_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_marketplace_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_marketplace_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_marketplace_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox Marketplace Server || Creating a Sleep Time scheduled application autoscalling for Billbox Marketplace with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_marketplace_service_name }}-off-time
+#          --schedule "cron({{ kowri_marketplace_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_marketplace_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_marketplace_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_marketplace_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: KOWRI Marketplace || Creating a Wake Time scheduled application autoscalling for Billbox Marketplace
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_marketplace_service_name }}-wake-time
+#          --schedule "cron({{ kowri_marketplace_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_marketplace_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_marketplace_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_marketplace_service_scheduled_autoscalling | default(false)
+#
+#    - name: Billbox Marketplace Server || Creating a Wake Time scheduled application autoscalling for Billbox Marketplace with awscli
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_marketplace_service_name }}
+#          --scheduled-action-name scheduled-gh-office-{{ kowri_marketplace_service_name }}-wake-time
+#          --schedule "cron({{ kowri_marketplace_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_marketplace_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_marketplace_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_marketplace_service_scheduled_autoscalling | default(false)
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#    - name: Kowri Integration MTN || Creating a Sleep Time scheduled application autoscalling for integration-mtnopenapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnopenapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnopenapi-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#    - name: Kowri Integration MTN || Creating a Sleep Time scheduled application autoscalling for integration-mtnopenapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnopenapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnopenapi-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#    - name: Kowri Integration MTN || Creating a Wake Time scheduled application autoscalling for integration-mtnopenapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnopenapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnopenapi-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#    - name: Kowri Integration MTN || Creating a Wake Time scheduled application autoscalling for integration-mtnopenapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnopenapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnopenapi-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#    - name: Kowri Integration ZIMSWITCH || Creating a Sleep Time scheduled application autoscalling for integration-zimswitch-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationzimswitch-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationzimswitch-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-off-time
+#    - name: Kowri Integration ZIMSWITCH || Creating a Sleep Time scheduled application autoscalling for integration-zimswitch-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationzimswitch-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationzimswitch-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#    - name: Kowri Integration ZIMSWITCH || Creating a Wake Time scheduled application autoscalling for integration-zimswitch-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationzimswitch-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationzimswitch-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ kowri_business_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ kowri_business_service_name }}-wake-time
+#    - name: Kowri Integration ZIMSWITCH || Creating a Wake Time scheduled application autoscalling for integration-zimswitch-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationzimswitch-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationzimswitch-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_bulkprocessor_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ bb_bulkprocessor_service_name }}-off-time
+#    - name: Billbox Bulk Processor || Creating a Sleep Time scheduled application autoscalling for billbox bulkprocessor service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-bulkprocessorserver-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-bulkprocessorserver-service-off-time
+#          --schedule "cron({{ bb_bulkprocessor_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_bulkprocessor_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_bulkprocessor_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ bb_bulkprocessor_service_name }}-off-time
+#    - name: Billbox Bulk Processor || Creating a Sleep Time scheduled application autoscalling for bulkprocessor service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-bulkprocessorserver-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-bulkprocessorserver-service-off-time
+#          --schedule "cron({{ bb_bulkprocessor_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_bulkprocessor_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_bulkprocessor_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ bb_bulkprocessor_service_name }}-wake-time
+#    - name: Billbox Bulk Processor || Creating a Wake Time scheduled application autoscalling for bulk processor service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-bulkprocessorserver-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-bulkprocessorserver-service-wake-time
+#          --schedule "cron({{ bb_bulkprocessor_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - bb_bulkprocessor_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+# # --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_bulkprocessor_service_name }}
+# # --scheduled-action-name scheduled-gh-office-{{ bb_bulkprocessor_service_name }}-wake-time
+#    - name: Billbox Bulk Processor || Creating a Wake Time scheduled application autoscalling for bulk processor service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-bulkprocessorserver-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-bulkprocessorserver-service-wake-time
+#          --schedule "cron({{ bb_bulkprocessor_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_bulkprocessor_service_scheduled_sleep_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - bb_bulkprocessor_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Kowri Integration UMB || Creating a Sleep Time scheduled application autoscalling for integration-umpapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationumbapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationumbapi-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#
+#    - name: Kowri Integration UMB || Creating a Sleep Time scheduled application autoscalling for integration-umbapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationumbapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationumbapi-service-off-time
+#          --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Integration UMB || Creating a Wake Time scheduled application autoscalling for integration-umbapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationumbapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationumbapi-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#          --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Integration UMB || Creating a Wake Time scheduled application autoscalling for integration-umbapi-service
+#      shell: >
+#          aws application-autoscaling put-scheduled-action --service-namespace ecs
+#          --scalable-dimension ecs:service:DesiredCount
+#          --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationumbapi-service
+#          --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationumbapi-service-wake-time
+#          --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#          --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#          --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Kowri Integration MTN DATA || Creating a Sleep Time scheduled application autoscalling for integration-umpapi-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtndata-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtndata-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#
+#    - name: Kowri Integration MTN DATA || Creating a Sleep Time scheduled application autoscalling for integration-mtndata-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtndata-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtndata-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Integration MTN DATA || Creating a Wake Time scheduled application autoscalling for integration-mtndata-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtndata-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtndata-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Integration MTN DATA || Creating a Wake Time scheduled application autoscalling for integration-mtndata-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtndata-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtndata-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#
+#    - name: Kowri Integration MTN FIBRE || Creating a Sleep Time scheduled application autoscalling for integration-umpapi-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnfibre-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnfibre-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#
+#    - name: Kowri Integration MTN FIBRE || Creating a Sleep Time scheduled application autoscalling for integration-mtnfibre-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnfibre-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnfibre-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Integration MTN FIBRE || Creating a Wake Time scheduled application autoscalling for integration-mtnfibre-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnfibre-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnfibre-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Integration MTN FIBRE || Creating a Wake Time scheduled application autoscalling for integration-mtnfibre-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationmtnfibre-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationmtnfibre-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Integration Origgin ECG || Creating a Sleep Time scheduled application autoscalling for integration-umpapi-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationorigginecg-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationorigginecg-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#
+#    - name: Kowri Integration Origgin ECG || Creating a Sleep Time scheduled application autoscalling for integration-origginecg-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationorigginecg-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationorigginecg-service-off-time
+#        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+#
+#    - name: Kowri Integration Origgin ECG || Creating a Wake Time scheduled application autoscalling for integration-origginecg-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationorigginecg-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationorigginecg-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#        --profile {{ lookup('env','AWS_PROFILE') }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - not global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#
+#    - name: Kowri Integration Origgin ECG || Creating a Wake Time scheduled application autoscalling for integration-origginecg-service
+#      shell: >
+#        aws application-autoscaling put-scheduled-action --service-namespace ecs
+#        --scalable-dimension ecs:service:DesiredCount
+#        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbintegrationorigginecg-service
+#        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbintegrationorigginecg-service-wake-time
+#        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+#        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+#        --region {{ global_var_ecs_region }}
+#      when:
+#        - global_awx_ad_hoc_shell_switch is defined
+#        - global_awx_ad_hoc_shell_switch
+#        # - kowri_business_service_scheduled_autoscalling | default(false)
+#        - global_auto_turnoff
+#      environment:
+#        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+#        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+
+
+
+
+    - name: Kowri Integration kbwebcheckout || Creating a Sleep Time scheduled application autoscalling for integration-kbwebcheckout-service
+      shell: >
+        aws application-autoscaling put-scheduled-action --service-namespace ecs
+        --scalable-dimension ecs:service:DesiredCount
+        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbwebcheckout-service
+        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbwebcheckout-service-off-time
+        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+        --region {{ global_var_ecs_region }}
+        --profile {{ lookup('env','AWS_PROFILE') }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+        # - kowri_business_service_scheduled_autoscalling | default(false)
+        - global_auto_turnoff
+
+
+    - name: Kowri Integration kbwebcheckout || Creating a Sleep Time scheduled application autoscalling for integration-origginecg-service
+      shell: >
+        aws application-autoscaling put-scheduled-action --service-namespace ecs
+        --scalable-dimension ecs:service:DesiredCount
+        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbwebcheckout-service
+        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbwebcheckout-service-off-time
+        --schedule "cron({{ kowri_business_service_sleep_cron | default(locally_defined_sleep_time) }})"
+        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ kowri_business_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+        --region {{ global_var_ecs_region }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+        # - kowri_business_service_scheduled_autoscalling | default(false)
+        - global_auto_turnoff
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+
+    - name: Kowri Integration kbwebcheckout || Creating a Wake Time scheduled application autoscalling for integration-origginecg-service
+      shell: >
+        aws application-autoscaling put-scheduled-action --service-namespace ecs
+        --scalable-dimension ecs:service:DesiredCount
+        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbwebcheckout-service
+        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbwebcheckout-service-wake-time
+        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+        --region {{ global_var_ecs_region }}
+        --profile {{ lookup('env','AWS_PROFILE') }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+        # - kowri_business_service_scheduled_autoscalling | default(false)
+        - global_auto_turnoff
+
+    - name: Kowri Integration kbwebcheckout || Creating a Wake Time scheduled application autoscalling for integration-origginecg-service
+      shell: >
+        aws application-autoscaling put-scheduled-action --service-namespace ecs
+        --scalable-dimension ecs:service:DesiredCount
+        --resource-id service/{{ global_var_ecs_clustername }}/main-billbox-uat-kbwebcheckout-service
+        --scheduled-action-name scheduled-gh-office-main-billbox-uat-kbwebcheckout-service-wake-time
+        --schedule "cron({{ kowri_business_service_wake_cron | default(locally_defined_wake_time) }})"
+        --scalable-target-action MinCapacity={{ kowri_business_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ kowri_business_service_scheduled_wake_autoscalling_max_task | default(1) }}
+        --region {{ global_var_ecs_region }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+        # - kowri_business_service_scheduled_autoscalling | default(false)
+        - global_auto_turnoff
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+

@@ -1,0 +1,60 @@
+- name: Including network and facts
+  import_playbook: fact_gatherer_playbook.yml
+  tags:
+    - facts
+
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - playbook_vars/{{ global_var_environment }}/global_vars.yml
+    - playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault
+    - playbook_vars/{{ global_var_environment }}/proxy_forward_gh_zeepaymomo_vars.yml
+  tasks:
+
+    - name: Proxy Elb group infos
+      elb_target_group_info:
+        load_balancer_arn: "{{ hostvars.localhost.reg_internal_alb_facts.load_balancers.0.load_balancer_arn }}"
+        region: "{{ global_var_ecs_region }}"
+      register: reg_proxy_target_group_facts
+    
+    - name: Extracting in a  list all the targetgroups available
+      set_fact:
+        local_target_group_list: "{{ reg_proxy_target_group_facts.target_groups | map(attribute='target_group_name') | list }}"
+
+    - debug: var=reg_proxy_instance_ids
+
+    # - name: Extracting ids from EC2 Facts from the proxies
+    #   set_fact: 
+    #     proxy_ids: "{{ hostvars.localhost.reg_proxy_facts.instances | map(attribute='instance_id') | list }}"
+       
+ 
+    - name: Billbox Proxies || Creating core target group public 
+      elb_target_group:
+        name: "{{ proxy_forward_gh_zeepaymomoTG.name }}"
+        state: present 
+        protocol: "{{ proxy_forward_gh_zeepaymomoTG.protocol }}"
+        successful_response_codes: "{{ proxy_forward_gh_zeepaymomoTG.success_response_code }}"
+        wait_timeout: 200 
+        health_check_interval: "{{ proxy_forward_gh_zeepaymomoTG.check_interval }}"
+        modify_targets: true 
+        healthy_threshold_count: "{{ proxy_forward_gh_zeepaymomoTG.healthy_count }}"
+        health_check_path: "{{ proxy_forward_gh_zeepaymomoTG.check_path }}"
+        health_check_protocol: "{{ proxy_forward_gh_zeepaymomoTG.check_protocol }}"
+        unhealthy_threshold_count: "{{ proxy_forward_gh_zeepaymomoTG.unhealthy_count }}"
+        region: "{{ global_var_ecs_region }}"
+        target_type: "{{ proxy_forward_gh_zeepaymomoTG.target_type }}"
+        targets: "{{ proxy_forward_gh_zeepaymomoTG.targets }}"
+        port: "{{ proxy_forward_gh_zeepaymomoTG.port }}"
+        vpc_id: "{{ hostvars.localhost.reg_vpc_facts.vpcs.0.id }}" 
+        # wait: false 
+        health_check_timeout: "{{ proxy_forward_gh_zeepaymomoTG.check_timeout }}"
+        tags: "{{ proxy_forward_gh_zeepaymomoTG.tags }}"
+      register: reg_proxy_forward_gh_zeepaymomoTG
+      when: 
+      - local_target_group_list is defined
+      - proxy_forward_gh_zeepaymomoTG is defined
+      - proxy_forward_gh_zeepaymomoTG.name not in local_target_group_list
+
+    
+    ###AWS_PROFILE=slydepay ansible-playbook ~/Dreamoval/Engineering/configuration-management-ansible/playbooks/billbox_ecs/{{ global_var_environment }}/proxy_playbook_ireland.yml -u ubuntu --private-key ~/Dropbox/creds/pemfiles/billbox/GH/GHBillboxProductionOps.pem --vault-password-file ~/Dropbox/creds/ansible-vault/billbox/production.password

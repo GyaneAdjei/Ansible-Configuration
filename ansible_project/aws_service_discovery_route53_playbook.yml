@@ -1,0 +1,300 @@
+# - import_playbook: fact_gatherer_playbook.yml
+#   tags:
+#   - facts
+
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+  tasks:
+    - name: Pulling VPC facts
+      ec2_vpc_net_info:
+        region: "{{ global_var_ird_region }}"
+        filters:
+          cidr: "{{ global_var_ird_vpc_cidr }}"
+      register: reg_vpc_details
+      tags:
+        - always
+
+    - name: List of current namespace
+      shell: "aws servicediscovery list-namespaces --region {{global_var_ird_region}} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: reg_manual_namespace_list
+      tags:
+        - always
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch        
+
+    - name: List of current namespace with awscli
+      shell: "aws servicediscovery list-namespaces --region {{global_var_ird_region}}"
+      register: reg_manual_namespace_list_awscli
+      tags:
+        - always
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"        
+
+    - name: Creating json object out of the output of listed namespace
+      set_fact:
+        NamespaceList: "{{ reg_manual_namespace_list.stdout | from_json }}"
+      tags:
+        - always
+      when: reg_manual_namespace_list.changed
+
+    - name: Creating json object out of the output of listed namespace awscli
+      set_fact:
+        NamespaceList: "{{ reg_manual_namespace_list_awscli.stdout | from_json }}"
+      tags:
+        - always
+      when: reg_manual_namespace_list_awscli.changed
+
+    # - debug: var=NamespaceList
+
+    - name: Saving the extracted namespace name from the returned list
+      set_fact:
+        NamspacesExtracted: "{{ NamespaceList.Namespaces | map(attribute='Name')|list }}"
+      tags:
+        - always
+
+    - name: Creating private aws service discovery namespace
+      shell: "aws servicediscovery create-private-dns-namespace --name {{ global_var_priv_dns_namespace }} --vpc {{ reg_vpc_details.vpcs.0.id}} --region {{global_var_ird_region}} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: reg_create_namespace
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+ 
+    - debug: var=reg_create_namespace
+
+    - name: Creating private aws service discovery namespace with awscli
+      shell: "aws servicediscovery create-private-dns-namespace --name {{ global_var_priv_dns_namespace }} --vpc {{ reg_vpc_details.vpcs.0.id}} --region {{global_var_ird_region}}"
+      register: reg_create_namespace
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"         
+
+    # - debug: var=reg_create_namespace
+
+    - name: Getting the id of created namespace
+      shell: "aws servicediscovery get-operation --operation-id {{ (reg_create_namespace.stdout | from_json).OperationId }} --region {{global_var_ird_region}} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: reg_dns_operation_details
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length  ==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+
+    - name: Getting the id of created namespace with awscli
+      shell: "aws servicediscovery get-operation --operation-id {{ (reg_create_namespace.stdout | from_json).OperationId }} --region {{global_var_ird_region}}"
+      register: reg_dns_operation_details
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length  ==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}" 
+
+    - name: Making sure the namespace is completely created
+      shell: "aws servicediscovery get-operation --operation-id {{ (reg_create_namespace.stdout | from_json).OperationId }} --region {{global_var_ird_region}} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: operation_details
+      until:  (operation_details.stdout | from_json).Operation.Status == "SUCCESS"
+      retries: 10
+      delay: 5
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+
+    - name: Making sure the namespace is completely created with aws
+      shell: "aws servicediscovery get-operation --operation-id {{ (reg_create_namespace.stdout | from_json).OperationId }} --region {{global_var_ird_region}}"
+      register: operation_details
+      until:  (operation_details.stdout | from_json).Operation.Status == "SUCCESS"
+      retries: 10
+      delay: 5
+      tags:
+        - create
+      when: 
+        - (NamespaceList.Namespaces | length==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"         
+
+    - name: extracting namespace id from created operation
+      set_fact:
+        NamespaceId: "{{ (reg_dns_operation_details.stdout | from_json).Operation.Targets.NAMESPACE }}"
+      when: (NamespaceList.Namespaces | length==0 ) or global_var_priv_dns_namespace not in NamspacesExtracted
+      tags:
+        - always
+
+    - name: extracting namespace id from namespace list
+      set_fact:
+        NamespaceId: "{{ item.Id }}"
+      loop: "{{ NamespaceList.Namespaces }}"
+      when:
+      - (NamespaceList.Namespaces | length > 0 )
+      - global_var_priv_dns_namespace in NamspacesExtracted
+      - global_var_priv_dns_namespace == item.Name
+      tags:
+        - always
+
+    - name: Get the list of already created services
+      shell: "aws servicediscovery list-services  --filters \"Name=NAMESPACE_ID,Values={{ NamespaceId }}\" --region {{ global_var_ird_region }} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: reg_manual_serviceslist_details
+      tags:
+        - always
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch       
+
+    - name: Get the list of already created services with awscli
+      shell: "aws servicediscovery list-services  --filters \"Name=NAMESPACE_ID,Values={{ NamespaceId }}\" --region {{ global_var_ird_region }}"
+      register: reg_manual_serviceslist_details_awscli
+      tags:
+        - always
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"         
+
+
+    - name: Creating json object out of the service list retrieved
+      set_fact:
+        ServiceListJson: "{{ reg_manual_serviceslist_details.stdout | from_json }}"
+      tags:
+        - always
+      when: reg_manual_serviceslist_details.changed
+
+    # - debug: var=ServiceListJson 
+    - name: Creating a simple list with the service names extracted
+      set_fact:
+        SimpleServiceList: "{{ (reg_manual_serviceslist_details.stdout | from_json).Services | map(attribute='Name') | list }}"
+      tags:
+        - always
+      when: reg_manual_serviceslist_details.changed
+
+    - name: Creating json object out of the service list retrieved awscli
+      set_fact:
+        ServiceListJson: "{{ reg_manual_serviceslist_details_awscli.stdout | from_json }}"
+      tags:
+        - always
+      when: reg_manual_serviceslist_details_awscli.changed
+
+    # - debug: var=ServiceListJson 
+    - name: Creating a simple list with the service names extracted awscli
+      set_fact:
+        SimpleServiceList: "{{ (reg_manual_serviceslist_details_awscli.stdout | from_json).Services | map(attribute='Name') | list }}"
+      tags:
+        - always
+      when: reg_manual_serviceslist_details_awscli.changed
+
+    # - debug: var=ServiceListJson
+    # - debug: var=SimpleServiceList
+
+    - name: Creating all services
+      shell: "aws servicediscovery create-service --name {{ item.value.name }} --dns-config 'NamespaceId=\"{{ NamespaceId }}\",DnsRecords=[{Type=\"A\",TTL=\"300\"}]' --health-check-custom-config FailureThreshold=1 --region {{ global_var_ird_region }} --profile {{ lookup('env','AWS_PROFILE') }}"
+      register: reg_createservices_details
+      with_dict: "{{ global_var_services_details }}"
+      tags:
+        - create
+      when:
+        - global_var_services_details is defined
+        - item.value.name not in SimpleServiceList
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch       
+
+    - name: Creating all services with awscli
+      shell: "aws servicediscovery create-service --name {{ item.value.name }} --dns-config 'NamespaceId=\"{{ NamespaceId }}\",DnsRecords=[{Type=\"A\",TTL=\"300\"}]' --health-check-custom-config FailureThreshold=1 --region {{ global_var_ird_region }}"
+      register: reg_createservices_details
+      with_dict: "{{ global_var_services_details }}"
+      tags:
+        - create
+      when:
+        - global_var_services_details is defined
+        - item.value.name not in SimpleServiceList
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}" 
+
+    - name: Getting hosted zone ID from route53
+      route53_info:
+        query: hosted_zone
+        hosted_zone_method: list_by_name
+        dns_name: "{{ global_var_priv_dns_namespace }}"
+      register: reg_servicediscovery_facts
+
+    - name: Attaching hosted zone to our VPC
+      route53_zone:
+        zone: "{{ global_var_priv_dns_namespace }}"
+        vpc_region: "{{ global_var_ird_region }}"
+        hosted_zone_id: "{{ reg_servicediscovery_facts.HostedZones.0.Id }}"
+        region: "{{ global_var_ird_region }}"
+        state: present # not required. choices: present;absent. whether or not the zone should exist or not
+        vpc_id: "{{ reg_vpc_details.vpcs.0.id}}"
+    # - debug: var=reg_servicediscovery_facts
+
+    # - name: Confirming user action for destroying
+    #   pause:
+    #     prompt: "This is going to destroy everything on service discovery. Continue (yes/no) ?"
+    #   register: reg_destroy
+    #   tags:
+    #     - destroy
+
+    # - name: Evaluating the user input into a variable
+    #   set_fact:
+    #     UserInput: "{{ reg_destroy.user_input | bool }}"
+    #   tags:
+    #     - destroy
+
+    # - name: Delete all services
+    #   shell: "aws servicediscovery delete-service  --id {{ item.Id }} --region {{ global_var_ird_region }} --profile {{ lookup('env','AWS_PROFILE') }}"
+    #   when: UserInput
+    #   with_items: "{{ServiceListJson.Services}}"
+    #   tags:
+    #     - destroy
+
+    # - name: Delete all services
+    #   shell: "aws servicediscovery delete-namespace  --id {{ NamespaceId }} --region {{ global_var_ird_region }} --profile {{ lookup('env','AWS_PROFILE') }}"
+    #   when: UserInput
+    #   tags:
+    #     - destroy
+
+
+
+
+
+#when: hostvars['localhost'].mypause.user_input | bool
+
+
+
+
+##AWS_PROFILE=smartslyde ansible-playbook -i ~/Dreamoval/Enginering/configuration-management-ansible/playbooks/smartgrid/zw_slydepay/inventory \
+# -u ubuntu --private-key ~/Ansible/zw/deployments/ZWStageAutomation.pem \
+#~/Dreamoval/Engineering/configuration-management-ansible/playbooks/smartgrid/zw_slydepay/stage/servicediscovery_setup.yml \
+#-e "@~/Dreamoval/Engineering/configuration-management-ansible/playbook_vars/zw_slydepay/vault/vault_stage_creds.yml" \
+#-e "@~/Dreamoval/Engineering/configuration-management-ansible/playbook_vars/zw_slydepay/stage/zw_slydepay_global_vars.yml" \
+#--vault-password-file ~/Dropbox/creds/ansible-vault/zw_slydepay/zw_stage_credentials.secrets

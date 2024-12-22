@@ -1,0 +1,2 @@
+#ansible_ssh_common_args: '-o ProxyCommand="ssh -o StrictHostKeyChecking=no -i {{ hostvars.localhost.reg_jumpbox_ssh_key }} -W %h:%p -q ubuntu@{{ hostvars.localhost.reg_jumpbox_facts.instances.0.public_ip_address }}"'
+ansible_ssh_common_args: '-o ProxyCommand="ssh -o StrictHostKeyChecking=no -i ~/Dropbox/creds/pemfiles/billbox/GH/GHBillboxUATOps.pem -W %h:%p -q ubuntu@54.170.121.117"'

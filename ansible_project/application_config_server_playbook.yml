@@ -1,0 +1,99 @@
+---
+- import_playbook: fact_gatherer_playbook.yml
+  tags:
+    - facts
+- import_playbook: aws_service_discovery_route53_playbook.yml
+  tags:
+    - facts
+
+
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/application_config_server_vars.yml"
+    - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+  tasks:
+
+  - name: ConfigServer || Extracting ARN from service discovery
+    set_fact:
+      reg_config_sd_dns_details: "{{ ServiceListJson | json_query(\"Services[?Name=='\" + global_var_services_details.configserver.name+\"']\") }}"
+
+  - name: ConfigServer || Creating Parameter Store secrets for configserver
+    aws_ssm_parameter_store:
+      name: "{{ item.value.id }}"
+      decryption: true 
+      region: "{{ bb_active_region }}"
+      string_type: "{{ item.value.stringtype | default('SecureString')}}"
+      value: "{{ item.value.content }}"
+      state: "{{ item.value.state | default('present')}}"
+      overwrite_value: always
+      description: "{{ item.value.description | default('Parameter store for config_server') }}"
+    with_dict: "{{ bb_config_server_task_container_secretenv_definition }}"
+    register: reg_config_param_store
+    no_log: true    
+
+  # - debug: var=reg_config_param_store
+
+  - name: ConfigServer || Creating config task definition configserver 
+    ecs_taskdefinition:
+      state: present 
+      family: "{{ bb_config_server_task_family_name }}"
+      region: "{{ bb_active_region }}"
+      execution_role_arn: "{{ bb_config_server_task_executionRoleArn }}" 
+      network_mode: "{{ bb_config_server_task_networkmode }}"
+      launch_type: "{{ bb_config_server_task_ecsmode }}"
+      cpu: "{{ bb_config_server_task_cpu }}"
+      memory: "{{ bb_config_server_task_memory }}"
+      force_create: yes
+      containers: 
+
+      # - name: "envoy-proxy"
+      #   image: "{{ global_var_services_details.envoyproxyserver.image }}"
+      - name: "datadog-agent"
+        image: "datadog/agent:latest"
+        essential: true
+        secrets:
+        - name: "{{ bb_config_server_task_container_secretenv_definition.dd_api_key.name }}"
+          valueFrom: "{{ bb_config_server_task_container_secretenv_definition.dd_api_key.id }}"
+        environment: "{{ bb_config_server_datadog_task_container_env }}"
+
+      - name: "{{ global_var_services_details.configserver.name }}"
+        image: "{{ bb_config_server_task_container_image }}"
+        cpu: "{{ bb_config_server_task_container_cpu }}"
+        memory: "{{ bb_config_server_task_container_memory }}"
+        memoryReservation: "{{ bb_config_server_task_container_memoryReservation }}"
+        repositoryCredentials:
+          credentialsParameter: "{{ bb_config_server_task_container_credentials_parameter }}"
+        portMappings:
+        - containerPort: "{{ global_var_services_details.configserver.containerPort }}"
+          hostPort: "{{ global_var_services_details.configserver.hostPort }}"
+        essential: "{{ bb_config_server_task_container_essential }}"
+        secrets: "{{ bb_config_server_task_container_secretenv }}"
+        environment: "{{ bb_config_server_task_container_env }}"
+        logConfiguration:
+          logDriver: "{{ bb_config_server_task_container_log_driver }}"
+          options:
+            awslogs-group: "{{ bb_config_server_task_container_log_logsgroup }}"
+            awslogs-region: "{{ bb_config_server_task_container_log_logsregion }}" 
+            awslogs-stream-prefix: "{{ bb_config_server_task_container_log_logsprefix }}"
+    register: reg_config_servertaskdef
+
+  
+  - name: ConfigServer || Creating or Updating the ECS service configserver
+    ecs_service:
+      state: present 
+      name: "{{ bb_config_service_name }}"
+      service_registries:
+        - registryArn: "{{ hostvars.localhost.reg_config_sd_dns_details.0.Arn }}"
+      network_configuration:
+          assign_public_ip: no
+          security_groups: "{{ hostvars.localhost.reg_app_secgroup_ids_facts | list }}"
+          subnets: "{{ hostvars.localhost.reg_private_app_subnet_ids_facts | list }}"
+      desired_count: "{{ bb_config_service_count }}"
+      cluster: "{{ global_var_ecs_clustername }}"
+      task_definition: "{{ bb_config_server_task_family_name }}:{{ reg_config_servertaskdef.taskdefinition.revision }}"
+      region: "{{ bb_active_region }}"
+      launch_type: "{{ bb_config_server_task_ecsmode }}"
+    when: not bb_config_service_awscli_enabled

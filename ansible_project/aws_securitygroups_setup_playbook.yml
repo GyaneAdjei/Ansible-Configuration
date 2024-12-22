@@ -1,0 +1,257 @@
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+    - playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault    
+  tasks:
+
+    - name: Obtaining AWS Account Facts
+      aws_caller_facts:
+      register: reg_setup_aws_facts
+   
+    - name: Setup || Creating Security Groups for MSK kafka
+      ec2_group:
+        name: "{{ global_var_kafka_secgroup }}"
+        description: "security group for the kafka msk"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 2181
+              - 9092-9094
+            group_name:
+              - "{{ global_var_app_secgroup }}"
+              - "{{ global_var_jumpbox_secgroup }}"
+            rule_desc: allow app and jumpbox on kaka msk
+        tags:
+          Name: "{{ global_var_kafka_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_kafka_secgroup
+
+    # - debug: var=reg_setup_kafka_secgroup
+
+    - name: Setup || Creating Security Groups for ELK
+      ec2_group:
+        name: "{{ global_var_elk_secgroup }}"
+        description: "security group for the elasticsearch"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 443
+            group_name:
+              - "{{ global_var_app_secgroup }}"
+              - "{{ global_var_jumpbox_secgroup }}"
+            rule_desc: allow app and jumpbox on elasticsearch
+        tags:
+          Name: "{{ global_var_elk_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_elk_secgroup
+
+    - name: Setup || Creating Security Groups for App ird
+      ec2_group:
+        name: "{{ global_var_app_secgroup }}"
+        description: "security group for app cluster"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 80-40000
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_app_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_app_secgroup_ird
+
+    - name: Setup || Creating Security Groups for App frt
+      ec2_group:
+        name: "{{ global_var_app_secgroup }}"
+        description: "security group for app cluster"
+        vpc_id: "{{ global_var_frt_vpc_id }}"
+        region: "{{ global_var_frt_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 80-40000
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_app_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_app_secgroup_frt
+
+    - name: Setup || Creating Security Groups for Mongo ird
+      ec2_group:
+        name: "{{ global_var_mongo_secgroup }}"
+        description: "security group for mongo cluster"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 27017
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_mongo_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_mongo_secgroup_ird
+
+    - name: Setup || Creating Security Groups for Mongo frt
+      ec2_group:
+        name: "{{ global_var_mongo_secgroup }}"
+        description: "security group for mongo cluster"
+        vpc_id: "{{ global_var_frt_vpc_id }}"
+        region: "{{ global_var_frt_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 27017
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_mongo_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_mongo_secgroup_frt
+
+    - name: Setup || Creating Security Groups for Mysql ird
+      ec2_group:
+        name: "{{ global_var_mysql_secgroup }}"
+        description: "security group for mysql cluster"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - "{{ global_var_mysql_port }}"
+              - 4444
+              - 4467
+              - 4468
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_mysql_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_mysql_secgroup_ird
+
+    - name: Setup || Creating Security Groups for Mysql frt
+      ec2_group:
+        name: "{{ global_var_mysql_secgroup }}"
+        description: "security group for mysql cluster"
+        vpc_id: "{{ global_var_frt_vpc_id }}"
+        region: "{{ global_var_frt_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - "{{ global_var_mysql_port }}"
+              - 4444
+              - 4467
+              - 4468
+            cidr_ip:
+              - "{{ global_var_ird_vpc_cidr }}"
+              - "{{ global_var_frt_vpc_cidr }}"
+              - "{{ global_var_stm_vpc_cidr }}"   
+            rule_desc: allow connection for self
+          - proto: tcp
+            ports: 
+              - 22
+            cidr_ip:
+              - "{{ global_var_jumpbox_cidr }}" 
+            rule_desc: allow connection from jumpbox
+        tags:
+          Name: "{{ global_var_mongo_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_mongo_secgroup_frt
+      
+
+    - name: Setup || Creating Security Groups for the internal load balancer
+      ec2_group:
+        name: "{{ global_var_internalelb_secgroup }}"
+        description: "security group for internal load balancer"
+        vpc_id: "{{ global_var_frt_vpc_id }}"
+        region: "{{ global_var_frt_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 80-40000
+            cidr_ip:
+              - "172.20.0.0/16"   
+              - "172.21.0.0/16"   
+              - "172.22.0.0/16"   
+              - "10.0.0.0/16"   
+            rule_desc: allow connection from oregon,ireland, frankfurt
+        tags:
+          Name: "{{ global_var_internalelb_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_internalelb_secgroup_frt
+
+    - name: Setup || Creating Security Groups for the internal load balancer
+      ec2_group:
+        name: "{{ global_var_internalelb_secgroup }}"
+        description: "security group for internal load balancer"
+        vpc_id: "{{ global_var_ird_vpc_id }}"
+        region: "{{ global_var_ird_region }}"
+        rules:
+          - proto: tcp
+            ports: 
+              - 80-40000
+            cidr_ip:
+              - "172.20.0.0/16"   
+              - "172.21.0.0/16"   
+              - "172.22.0.0/16"   
+              - "10.0.0.0/16"   
+            rule_desc: allow connection from oregon,ireland, frankfurt
+        tags:
+          Name: "{{ global_var_internalelb_secgroup }}"
+          Product: "{{ global_var_product }}"
+      register: reg_setup_internalelb_secgroup_ird

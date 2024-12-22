@@ -1,0 +1,18 @@
+---
+- import_playbook: fact_gatherer_playbook.yml
+  tags:
+    - facts
+
+- hosts: "tag_Name_{{ global_var_country_code }}_{{ global_var_product }}_{{ global_var_environment }}_mysql"
+  roles:
+  # - security
+  # - util
+  # - percona_mysql
+  - networking
+  become: True
+  gather_facts: true
+  user: "{{ global_var_ubuntu_user }}"
+  vars_files:
+  - "playbook_vars/{{ global_var_environment }}/mysql_vars.yml"
+  - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+  - "playbook_vars/{{ global_var_environment }}/global_vars.yml"

@@ -1,0 +1,79 @@
+---
+
+- import_playbook: fact_gatherer_playbook.yml
+  tags:
+  - facts
+
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  become_user: "{{ global_var_ubuntu_user }}"
+  # environment:
+  #   AWS_REGION: "{{ global_var_ird_region }}"
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+  tasks:
+  # - name: Creating Folder on local machine for mongokey
+  #   include_role:
+  #     name: util
+  #     tasks_from: filesystem
+  #   vars:
+  #     util_filesystem_create_directory_with_pem_details: "{{ local_util_filesystem_create_directory_with_pem_details }}"
+
+  - name: Generating the Mongo replica key file
+    include_role:
+      name: security
+      tasks_from: random
+    vars:
+      security_random_generate_tofile_details: "{{ global_var_mongo_security_random_generate_tofile_details }}"
+
+  - name: Uploading replica key file to aws S3
+    include_role:
+      name: aws
+      tasks_from: s3
+    vars:
+      aws_s3_createbucket_details: "{{ global_var_mongo_s3_createbucket_details }}"
+      aws_s3_push_object_details: "{{ global_var_mongo_s3_object_details }}"
+      
+  - name: Refresh Dynamic inventory
+    meta: refresh_inventory
+    when: tag_Name_{{ global_var_country_code }}_{{ global_var_product }}_{{ global_var_environment }}_mongo is not defined
+
+
+# - hosts: "tag_Name_{{ global_var_country_code }}_{{ global_var_product }}_{{ global_var_environment }}_mongo_arb"
+#   roles:
+#   - util
+#   - aws
+#   - mongo_family
+#   - networking
+#   # - monitoring
+#   become: True
+#   gather_facts: true
+#   user: "{{ global_var_ubuntu_user }}"
+#   vars_files:
+#   - "playbook_vars/{{ global_var_environment }}/mongo_arbiter_vars.yml"
+#   - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+#   - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+
+- hosts: "tag_Name_{{ global_var_country_code }}_{{ global_var_product }}_{{ global_var_environment }}_mongo"
+  roles:
+  - security
+  - util
+  - aws
+  - mongo_family
+  - networking
+  # - monitoring
+  # pre_tasks:
+  # # - debug: var=groups['tag_AName_main_billbox_uat_mongo_eu_west_1a']
+  # - debug: var=groups.master_mongo_target_helper
+  # - name: Installing unzip
+  #   apt: 
+  #     name: unzip
+  #     state: latest     
+  become: True
+  gather_facts: true
+  user: "{{ global_var_ubuntu_user }}"
+  vars_files:
+  - "playbook_vars/{{ global_var_environment }}/mongo_vars.yml"
+  - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+  - "playbook_vars/{{ global_var_environment }}/global_vars.yml"

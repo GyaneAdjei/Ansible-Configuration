@@ -1,0 +1,87 @@
+# - import_playbook: subnets_setup_playbook.yml
+
+- import_playbook: fact_gatherer_playbook.yml
+- import_playbook: aws_service_discovery_route53_playbook.yml
+
+# - import_playbook: application_aws_resources_scheduler_playbook.yml
+
+# - import_playbook: mongo_cluster_installation_playbook.yml
+# - import_playbook: createnew_or_update_mongo_databases_playbook.yml
+# - import_playbook: createnew_or_update_mongo_users_playbook.yml
+# - import_playbook: createnew_or_update_mysql_user_playbook.yml
+# - import_playbook: createnew_or_update_mysql_script_playbook.yml
+#- import_playbook: aws_cardhandlerpercona_to_rds_migration_playbook.yml
+
+
+# - import_playbook: mysql_cluster_installation_playbook.yml
+# - import_playbook: cardhandler_percona_xtradb_cluster_health_playbook.yml
+# - import_playbook: createnew_or_update_mysql_databases_playbook.yml
+# - import_playbook: createnew_or_update_mysql_user_playbook.yml
+# - import_playbook: createnew_or_update_mysql_script_playbook.yml
+
+# - import_playbook: proxy_cluster_installation_playbook.yml
+# - import_playbook: proxy_nginx_main_playbook.yml
+# - import_playbook: proxy_nginx_forward_gh_ghipss_playbook.yml
+# - import_playbook: proxy_nginx_forward_zw_econet_playbook.yml
+# - import_playbook: proxy_nginx_forward_gh_mpay_bundlesfiber_playbook.yml
+# - import_playbook: proxy_nginx_forward_gh_origginecg_playbook.yml
+# - import_playbook: proxy_nginx_forward_gh_appnmobile_airteltigo_playbook.yml
+# - import_playbook: proxy_nginx_forward_gh_niacard_playbook.yml
+
+# - import_playbook: test_playbook.yml
+
+# - import_playbook: application_keycloak_server_playbook.yml
+# - import_playbook: application_securecore_server_playbook.yml
+# - import_playbook: application_config_server_playbook.yml
+# - import_playbook: application_core_playbook.yml
+# - import_playbook: application_posapi_server_playbook.yml
+
+# - import_playbook: application_ussd_server_playbook.yml
+# - import_playbook: application_cardhandler_server_playbook.yml
+# - import_playbook: application_secure_cardhandler_server_playbook.yml
+# - import_playbook: application_metabase_server_playbook.yml
+#- import_playbook: application_webpos_playbook.yml
+# - import_playbook: application_marketplace_playbook.yml
+# - import_playbook: application_kowribusiness_server_playbook.yml
+# - import_playbook: application_securecore_server_playbook.yml
+# - import_playbook: application_notification_server_playbook.yml
+# - import_playbook: application_scheduler_server_playbook.yml
+
+# - import_playbook: application_secure_cardhandler_server_playbook.yml
+# - import_playbook: application_templateengine_server_playbook.yml
+# - import_playbook: application_messenger_server_playbook.yml
+# - import_playbook: application_webpos_playbook.yml
+#- import_playbook: application_marketplace_playbook.yml
+#- import_playbook: application_kowrimarketplace_playbook.yml
+# - import_playbook: application_kb_integration_zimswitch_server_playbook.yml
+# - import_playbook: application_zw_marketplace_playbook.yml
+# - import_playbook: application_guinea_marketplace_playbook.yml
+# - import_playbook: application_proxy_playbook.yml
+# - import_playbook: application_test_playbook.yml
+# - import_playbook: application_kowribusiness_server_playbook.yml
+# - import_playbook: application_kowriexperimentalcore_server_playbook.yml
+# - import_playbook: application_bulkprocessor_server_playbook.yml
+- import_playbook: application_kb_integration_mtnopenapi_server_playbook.yml
+# - import_playbook: application_kb_integration_umbapi_server_playbook.yml
+# - import_playbook: application_kb_integration_mtndata_server_playbook.yml
+# - import_playbook: application_kb_integration_mtnfibre_server_playbook.yml
+# - import_playbook: application_kb_integration_origginecg_server_playbook.yml
+#- import_playbook: application_kbwebcheckoutserver_playbook.yml
+#- import_playbook: application_kb_integration_appsnmobile_server_playbook.yml
+#- import_playbook: application_kb_integration_origginecg_server_playbook.yml
+# - import_playbook: application_kb_integration_appsnmobile_server_playbook.yml
+# - import_playbook: application_kb_integration_ghcard_server_playbook.yml
+
+### CLI Execution Notes UAT####
+# AWS_PROFILE=slydepay ansible-playbook -i ~/Dreamoval/Engineering/Infrastructure_as_code_global/ansible_projects/billbox_ecs_new/inventory
+# -u ubuntu --private-key ~/Ansible/main/billbox/deployments/uat/GHBillboxUATOps.pem
+# ~/Dreamoval/Engineering/Infrastructure_as_code_global/ansible_projects/billbox_ecs_new/all_playbook.yml
+# --vault-password-file ~/Dropbox/creds/ansible-vault/billbox_ecs_new/uat/vault.password -e "global_var_environment=uat" --skip-tags facts
+
+
+### CLI Execution Notes PROD####
+# AWS_PROFILE=slydepay ansible-playbook -i ~/Dreamoval/Engineering/Infrastructure_as_code_global/ansible_projects/billbox_ecs_new/inventory \
+# -u ubuntu --private-key ~/Ansible/main/billbox/deployments/prod/GHBillboxProductionOps.pem \
+# ~/Dreamoval/Engineering/Infrastructure_as_code_global/ansible_projects/billbox_ecs_new/all_playbook.yml \
+# --vault-password-file ~/Dropbox/creds/ansible-vault/billbox_ecs_new/prod/vault.password \
+# -e "global_var_environment=prod" --skip-tags facts

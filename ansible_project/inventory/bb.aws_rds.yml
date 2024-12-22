@@ -1,0 +1,19 @@
+plugin: amazon.aws.aws_rds
+boto_profile: slydepay
+# strict: True
+regions:
+  - eu-west-1
+  - eu-central-1
+  - eu-north-1
+include_clusters: true  
+# keyed_groups:
+#   # add hosts to tag_Name_value groups for each aws_ec2 host's tags.Name variable
+#   - key: tags
+#     prefix: tag
+# hostnames:
+#   - ip-address
+#   # - dns-name
+#   # - tag:Name
+#   - private-ip-address
+# compose:
+#   ansible_host: private_ip_address

@@ -1,0 +1,144 @@
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"
+    - playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault    
+  tasks:
+
+    - name: Obtaining AWS Account Facts
+      aws_caller_facts:
+      register: reg_setup_aws_facts
+
+    - name: Setup || Obtaining subnet for Services
+      ec2_vpc_subnet_info:
+        filters:
+          "tag:Name": "{{ global_var_services_subnet_name }}"
+        region: "{{ global_var_ird_region }}"
+      register: reg_setup_service_ird_subnet_facts
+
+    - name: Setting fact for the services subnets
+      set_fact:
+        reg_setup_service_ird_subnet_list: "{{ reg_setup_service_ird_subnet_facts.subnets | map(attribute='id') | list }}"
+
+    # - debug: var=reg_setup_service_ird_subnet_list[:2]
+    # - debug: var=reg_setup_service_ird_subnet_facts
+
+    - name: Creating Elastic cache subnet group
+      elasticache_subnet_group:
+        state: present
+        name: "{{ global_var_country }}-{{ global_var_product }}-{{ global_var_environment }}-elcsubgroup"
+        region: "{{ global_var_ird_region }}"
+        description: elastic cache elc subnet groups
+        subnets: "{{ reg_setup_service_ird_subnet_facts.subnets | map(attribute='id') | list }}"
+      register: reg_setup_elcredis_subnet_group
+    # - debug: var=reg_setup_service_ird_subnet_facts
+
+    - name: 'Create a test parameter group'
+      elasticache_parameter_group:
+        name: "{{ global_var_country }}-{{ global_var_product }}-{{ global_var_environment }}-redis{{ global_var_redis_engine_version | int }}-paramgroup"
+        group_family: "redis{{ global_var_redis_engine_version }}"
+        description: 'This is a cache parameter group'
+        state: 'present'
+        region: "{{ global_var_ird_region }}"
+      register: reg_setup_redis_param_group
+    - debug: var=reg_setup_redis_param_group
+
+    - name: Setup || Creating Elasticache Redis
+      elasticache:
+        name: "{{ global_var_country }}-{{ global_var_product }}-{{ global_var_environment }}-elcredis"
+        state: present
+        engine: "redis"
+        cache_engine_version: "{{ global_var_redis_engine_version }}"
+        node_type: "{{ global_var_redis_node_type }}"
+        num_nodes: "{{ global_var_redis_num_nodes }}"
+        region: "{{ global_var_ird_region }}"        
+        cache_port: 6379
+        cache_parameter_group: "{{ global_var_country }}-{{ global_var_product }}-{{ global_var_environment }}-redis{{ global_var_redis_engine_version | int }}-paramgroup"
+        security_group_ids:
+          - "{{ reg_setup_redis_secgroup.group_id }}"
+
+
+    - name: Generate kafka(MSK) node group info
+      template:
+        src: "templates/kafka_broker_node_group_info.json.j2"
+        dest: "files/kafka_broker_node_group_info_{{ global_var_environment }}.json"
+      vars:
+        local_kafka_instance_type: "{{ global_var_kafka_instance_type }}"
+        local_kafka_az_distribution: "DEFAULT"
+        local_kafka_subnets_group: "{{ reg_setup_service_ird_subnet_list }}"
+        # local_kafka_subnets_group: "{{ reg_setup_service_ird_subnet_facts.subnets | map(attribute='id') | list }}"
+        local_kafka_sec_group_list:
+          - "{{ reg_setup_kafka_secgroup.group_id }}"
+        local_kafka_volume_size: 3
+
+    - name: Create MSK Cluster
+      shell: >
+          aws kafka create-cluster
+          --cluster-name "{{ global_var_kafka_cluster_name }}"
+          --broker-node-group-info file://files/kafka_broker_node_group_info_{{ global_var_environment }}.json
+          --kafka-version "{{ global_var_kafka_version }}" 
+          --number-of-broker-nodes {{ global_var_kafka_broker_nodes }}
+          --region {{ global_var_ird_region }}
+          --profile {{ lookup('env','AWS_PROFILE') }}
+      ignore_errors: true
+
+
+  # use the AWS CLI to query for details about this cluster, if it exists
+    - name: check for existing Elasticsearch cluster
+      shell: >
+          aws es describe-elasticsearch-domains 
+          --domain-names {{ global_var_elk_domain_name }}
+          --region {{ global_var_ird_region }} 
+          --profile {{ lookup('env','AWS_PROFILE') }}          
+      changed_when: false
+      register: reg_setup_elasticsearch_cluster_query
+
+    # handle the output from the CLI
+    - name: parse Elasticsearch cluster query
+      set_fact:
+        reg_setup_elasticsearch_cluster: "{{ (reg_setup_elasticsearch_cluster_query.stdout | from_json).DomainStatusList[0] }}"
+      when: (reg_setup_elasticsearch_cluster_query.stdout | from_json).DomainStatusList[0] is defined
+    
+    
+    - name: Generate ELK cli json input
+      template:
+        src: "templates/elk_cli_input.json.j2"
+        dest: "files/elk_cli_input_{{ global_var_environment }}.json"
+      vars:
+        local_elasticsearch_name: "{{ global_var_elk_domain_name }}"
+        local_elasticsearch_version: "{{ global_var_elk_version }}"
+        local_elasticsearch_instance_type: "{{ global_var_elk_instance_type }}"
+        local_elasticsearch_instance_count: "{{ global_var_elk_instance_count }}"
+        local_elasticsearch_dedicated_masters_enabled: "{{ global_var_elk_enable_dedicated_masters }}"
+        local_elasticsearch_ebs_size_gb: 10
+        local_elasticsearch_subnet_list: "{{ reg_setup_service_ird_subnet_list[:global_var_elk_instance_count] }}"
+        local_elasticsearch_secgroup_list:
+          - "{{ reg_setup_elk_secgroup.group_id }}"
+        local_aws_region: "{{ global_var_ird_region }}"
+        local_aws_account_id: "{{ reg_setup_aws_facts.account }}"
+
+      # if the cluster doesn't exist (`when` clause), call the CLI to create it -- passing an evaluated template as the configuration
+    - name: create Elasticsearch cluster
+      shell: >
+          aws es create-elasticsearch-domain 
+          --cli-input-json file://files/elk_cli_input_{{ global_var_environment }}.json
+          --region {{ global_var_ird_region }} 
+          --profile {{ lookup('env','AWS_PROFILE') }}  
+      when: reg_setup_elasticsearch_cluster is not defined
+      register: reg_setup_elasticsearch_cluster_create
+
+    # poll the AWS CLI using `until` to wait until the output shows our Elasticsearch endpoint has appeared
+    - name: wait for Elasticsearch endpoint to be availabile
+      shell: >
+          aws es describe-elasticsearch-domains 
+          --domain-names {{ global_var_elk_domain_name }}
+          --region {{ global_var_ird_region }} 
+          --profile {{ lookup('env','AWS_PROFILE') }} 
+      changed_when: false
+      register: reg_setup_elasticsearch_cluster_query
+      until: (reg_setup_elasticsearch_cluster_query.stdout | from_json).DomainStatusList[0].Endpoints is defined
+      retries: 15
+      delay: 60
+
+  

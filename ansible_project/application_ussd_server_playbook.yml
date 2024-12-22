@@ -1,0 +1,420 @@
+- import_playbook: fact_gatherer_playbook.yml
+  tags:
+    - facts
+
+- import_playbook: aws_service_discovery_route53_playbook.yml
+  tags:
+    - facts
+
+
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - playbook_vars/{{ global_var_environment }}/global_vars.yml
+    - playbook_vars/{{ global_var_environment }}/application_ussd_vars.yml
+    - playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault
+  tasks:
+    - name: Extracting ARN from service discovery
+      set_fact:
+        reg_ussd_sd_dns_details: "{{ ServiceListJson | json_query(\"Services[?Name=='\" + global_var_services_details.ussdserver.name+\"']\") }}"
+
+
+    - name: USSD Server ||  Clearing Checking Folder
+      file:
+          path: "{{ global_var_configuration_git_dir }}"
+          state: absent
+      ignore_errors: true
+
+    - name: USSD Server ||  Creating billbox configuration git directory
+      file:
+        path: "{{ item.path }}"
+        recurse: yes
+        state: directory
+        mode: "0755"
+      when: global_var_configuration_git_create_folders_details is defined
+      with_items: "{{ global_var_configuration_git_create_folders_details | default({}) }}"
+
+    - name: USSD Server || Checking out the properties files
+      git:
+        repo: "{{ item.repo }}"
+        dest: "{{ item.dir }}"
+        version: "{{ item.version }}"
+        force: yes
+      when: global_var_configuration_git_details is defined
+      with_items: "{{ global_var_configuration_git_details }}"
+
+    - name: USSD Server || Encryption of USSD Mongo Db name
+      shell: "{{ spring_cloud_cli_path | default('') }}spring encrypt {{ vault_mongo_ussd_dbname }} --key {{ vault_configserver_encryption_key }}"
+      register: reg_ussd_mongo_dbname
+      environment:
+        JAVA_HOME: "{{ java_home_path | default(lookup('env', 'JAVA_HOME')) }}"
+
+
+    - name: USSD Server || Encryption of USSD Mongo URI
+      shell: "{{ spring_cloud_cli_path | default('') }}spring encrypt 'mongodb://{{ vault_mongo_ussd_username }}:{{ vault_mongo_ussd_password }}@{{ hostvars.localhost.reg_mongo_cluster_uri }}/{{ vault_mongo_ussd_dbname }}' --key {{ vault_configserver_encryption_key }}"
+      register: reg_ussd_mongo_uri
+      environment:
+        JAVA_HOME: "{{ java_home_path | default(lookup('env', 'JAVA_HOME')) }}"
+
+    - name: USSD Server || Setting Encrypted USSD credential facts
+      set_fact:
+        # reg_ussd_keycloak_id: "{{ reg_ussd_keycloak_id.stdout }}"
+        # reg_ussd_keycloak_secret: "{{ reg_ussd_keycloak_secret.stdout }}"
+        reg_ussd_mongo_dbname: "{{ reg_ussd_mongo_dbname.stdout }}"
+        reg_ussd_mongo_uri: "{{ reg_ussd_mongo_uri.stdout }}"
+
+    - name: USSD Server || Creating USSD config file
+      template: 
+        dest: "{{ global_var_configuration_git_dir }}/{{ global_var_configserver_folder }}/ussd-{{ global_var_environment }}.properties"
+        src: "templates/ussd.properties"
+
+    - name: USSD Server || Creating Parameter Store secrets for ussd
+      aws_ssm_parameter_store:
+        name: "{{ item.value.id }}"
+        decryption: true
+        region: "{{ global_var_ird_region }}"
+        string_type: "SecureString"
+        value: "{{ item.value.content }}"
+        state: "{{ item.value.state | default('present')}}"
+        overwrite_value: always # not required. choices: never;changed;always. Option to overwrite an existing value if it already exists.,String
+        description: "bb param store"
+      with_dict: "{{ bb_ussd_server_task_container_secretenv_definition }}"
+      register: reg_ussd_param_store
+      no_log: true
+
+    # - debug: var=reg_ussd_param_store
+
+    - name: USSD Server || Creating ussd task definition
+      ecs_taskdefinition:
+        state: present
+        family: "{{ bb_ussd_server_task_family_name }}"
+        region: "{{ bb_active_region }}"
+        execution_role_arn: "{{ bb_ussd_server_task_executionRoleArn }}" 
+        network_mode: "{{ bb_ussd_server_task_networkmode }}"
+        launch_type: "{{ bb_ussd_server_task_ecsmode }}"
+        cpu: "{{ bb_ussd_server_task_cpu }}"
+        memory: "{{ bb_ussd_server_task_memory }}"
+        force_create: true
+        containers:
+        - name: "{{ bb_ussd_service_monitoringserver_name }}"
+          image: "{{ bb_ussd_service_monitoringserver_image }}"
+          essential: false
+          secrets: "{{ bb_ussd_server_task_container_mon_secretenv }}"
+          environment: "{{ bb_ussd_server_task_container_mon_env }}"
+
+        - name: "{{ global_var_services_details.ussdserver.name }}"
+          image: "{{ bb_ussd_server_task_container_image }}"
+          cpu: "{{ bb_ussd_server_task_container_cpu }}"
+          memory: "{{ bb_ussd_server_task_container_memory }}"
+          memoryReservation: "{{ bb_ussd_server_task_container_memoryReservation }}"
+          repositoryCredentials:
+            credentialsParameter: "{{ bb_ussd_server_task_container_credentials_parameter }}"
+          portMappings:
+          - containerPort: "{{ global_var_services_details.ussdserver.containerPort }}"
+            hostPort: "{{ global_var_services_details.ussdserver.hostPort }}"
+          # - containerPort: "{{ global_var_services_details.ussdserver.containerPort }}"
+          #   hostPort: "{{ global_var_services_details.ussdserver.sidecarHostPort }}"
+          essential: "{{ bb_ussd_server_task_container_essential }}"
+          environment: "{{ bb_ussd_server_task_container_env }}"
+          logConfiguration:
+            logDriver: "{{ bb_ussd_server_task_container_log_driver }}"
+            options:
+              awslogs-group: "{{ bb_ussd_server_task_container_log_logsgroup }}"
+              awslogs-region: "{{ bb_ussd_server_task_container_log_logsregion }}" 
+              awslogs-stream-prefix: "{{ bb_ussd_server_task_container_log_logsprefix }}"
+
+        - name: "{{ global_var_services_details.corenginxserver.name }}"
+          image: "{{global_var_services_details.corenginxserver.image }}"
+          repositoryCredentials:
+            credentialsParameter: "{{ bb_ussd_server_task_container_credentials_parameter }}"
+          portMappings:
+          - containerPort: "{{ global_var_services_details.corenginxserver.containerPort }}"
+            hostPort: "{{ global_var_services_details.corenginxserver.hostPort }}"
+          essential: "{{ bb_ussd_sidecar_server_task_container_essential }}"
+          environment: "{{ bb_ussd_nginx_server_task_container_env }}"
+          logConfiguration:
+            logDriver: "{{ bb_ussd_server_task_container_log_driver }}"
+            options:
+              awslogs-group: "{{ bb_ussd_server_task_container_log_logsgroup }}"
+              awslogs-region: "{{ bb_ussd_server_task_container_log_logsregion }}" 
+              awslogs-stream-prefix: "{{ bb_ussd_server_task_container_log_logsprefix }}"
+      register: reg_ussd_servertaskdef
+
+    # - debug: var=reg_ussd_servertaskdef
+
+
+    - name: Billbox USSD || Obtaining target group facts
+      elb_target_group_info:
+        names: "{{ bb_ussd_targetgroup_name }}"
+        region: "{{ global_var_ecs_region }}"
+      register: reg_bb_ussd_target_group_facts
+
+    - name: USSD Server || Creating ussd target group
+      elb_target_group:
+        name: "{{ bb_ussd_targetgroup_name }}"
+        state: present
+        protocol: "{{ bb_ussd_targetgroup_protocol }}"
+        successful_response_codes: "{{ bb_ussd_targetgroup_success_http_code }}"
+        wait_timeout: 200
+        health_check_interval: "{{ bb_ussd_targetgroup_hc_interval }}"
+        modify_targets: true
+        healthy_threshold_count: "{{ bb_ussd_targetgroup_hc_healthycount }}"
+        health_check_path: "{{ bb_ussd_targetgroup_hc_path }}"
+        health_check_protocol: "{{ bb_ussd_targetgroup_hc_protocol }}"
+        unhealthy_threshold_count: "{{ bb_ussd_targetgroup_hc_unhealthycount }}"
+        region: "{{ bb_active_region }}"
+        target_type: "{{ bb_ussd_targetgroup_targettype }}"
+        port: 80
+        vpc_id: "{{ hostvars.localhost.reg_vpc_facts.vpcs.0.id }}"
+        # wait: false
+        health_check_timeout: "{{ bb_ussd_targetgroup_hc_timeout }}"
+      register: reg_ussd_targetgroup
+      when:
+        - reg_bb_ussd_target_group_facts | length == 0
+
+    - name: Billbox USSD || Obtaining target group facts
+      elb_target_group_info:
+        names: "{{ bb_ussd_targetgroup_name }}"
+        region: "{{ global_var_ecs_region }}"
+      register: reg_bb_ussd_target_group_facts
+
+    - name: Billbox USSD || creating the alb rule condition files
+      template:
+        dest: "files/{{ global_var_environment }}_ussd_alb_conditions.json"
+        src:  "templates/ussd_alb_conditions.json"
+
+    - name: Billbox USSD || Associating USSD target group to a ALB listener
+      shell: >
+          aws elbv2 create-rule --listener-arn {{ hostvars.localhost.reg_alb_facts.load_balancers.0.listeners.0.listener_arn }}
+          --priority {{ global_var_services_details.ussdserver.albPriority }}
+          --conditions file://files/{{ global_var_environment }}_ussd_alb_conditions.json
+          --actions Type=forward,TargetGroupArn={{ reg_bb_ussd_target_group_facts.target_groups.0.target_group_arn }}
+          --region {{ bb_active_region }}
+          --profile {{ lookup('env','AWS_PROFILE') }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - not global_awx_ad_hoc_shell_switch
+#           --conditions file://files/ussd_alb_conditions.json
+ 
+
+    - name: Billbox USSD || Associating USSD target group to a ALB listener with awscli
+      shell: >
+          aws elbv2 create-rule --listener-arn {{ hostvars.localhost.reg_alb_facts.load_balancers.0.listeners.0.listener_arn }}
+          --priority {{ global_var_services_details.ussdserver.albPriority }}
+          --conditions file://files/{{ global_var_environment }}_ussd_alb_conditions.json
+          --actions Type=forward,TargetGroupArn={{ reg_bb_ussd_target_group_facts.target_groups.0.target_group_arn }}
+          --region {{ bb_active_region }}
+      when:
+        - global_awx_ad_hoc_shell_switch is defined
+        - global_awx_ad_hoc_shell_switch
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}"
+
+    # - debug: var=reg_ussd_targetgroup
+    - name: Billbox USSD || Obtaining Service facts
+      ecs_service_info:
+        service: "{{ bb_ussd_service_name }}"
+        region: "{{ bb_active_region }}"
+        cluster: "{{ global_var_ecs_clustername }}"
+        details: false 
+      register: reg_ussd_service_facts
+
+    # - debug: var=reg_ussd_service_facts
+
+    # - name: Creating service json file
+    #   template:
+    #     src: ecsservice/ussd-service.json.j2
+    #     dest: "{{ global_var_configuration_git_dir }}/{{ global_var_ecs_clusterfolder }}/{{ global_var_environment }}/ussd-service.json"
+
+    - name: Billbox USSD || Staging git changes
+      shell: >
+          git add *
+      args:
+        chdir: "{{ global_var_configuration_git_dir }}"
+
+
+    - name: Billbox USSD || Committing git repository
+      shell: >
+          git commit
+          -m 'committing new tasks {{ global_var_services_details.ussdserver.name }}:{{ reg_ussd_servertaskdef.taskdefinition.revision }}
+          and ussd specific variable concens'
+      args:
+        chdir: "{{ global_var_configuration_git_dir }}"
+
+
+    - name: Billbox USSD || Pushing ussd changes to remote
+      shell: >
+          git push
+      args:
+        chdir: "{{ global_var_configuration_git_dir }}"
+
+
+    - name: Billbox USSD || Setting arn of the ussdserver ecs service
+      set_fact:
+        ecs_ussdserver_service_arn: "arn:aws:ecs:{{ bb_active_region }}:{{ hostvars.localhost.reg_aws_facts.account}}:service/{{ bb_ussd_service_name }}"
+
+    - name: Billbox USSD || Creating or Updating the ECS service ussdserver
+      ecs_service:
+        state: present
+        name: "{{ bb_ussd_service_name }}"
+        service_registries:
+          - registryArn: "{{ hostvars.localhost.reg_ussd_sd_dns_details.0.Arn }}"
+        network_configuration:
+            assign_public_ip: false
+            security_groups: "{{ hostvars.localhost.reg_app_secgroup_ids_facts | list }}"
+            subnets: "{{ hostvars.localhost.reg_private_app_subnet_ids_facts | list }}"
+        desired_count: "{{ bb_ussd_service_count }}"
+        cluster: "{{ global_var_ecs_clustername }}"
+        task_definition: "{{ bb_ussd_server_task_family_name }}:{{ reg_ussd_servertaskdef.taskdefinition.revision }}"
+        region: "{{ bb_active_region }}"
+        load_balancers:
+          - targetGroupArn: "{{ reg_bb_ussd_target_group_facts.target_groups.0.target_group_arn }}"
+            containerName: "{{ global_var_services_details.corenginxserver.name }}"
+            containerPort: "{{ global_var_services_details.corenginxserver.containerPort }}"
+            # containerPort: "{{ global_var_services_details.ussdserver.sidecardContainerPort }}"
+        launch_type: "{{ bb_ussd_server_task_ecsmode }}"
+        health_check_grace_period_seconds: "{{ bb_ussd_service_hc_graceperiod }}"
+      when: not bb_ussd_service_awscli_enabled
+
+    - name: USSD Server || Creating USSD Server MEM Scalling Policy for {{ global_var_environment }}
+      aws_application_scaling_policy:
+        state: present
+        policy_name: "{{ bb_ussd_service_mem_autoscalling_policy_name }}"
+        service_namespace: ecs
+        region: "{{ bb_active_region }}"
+        resource_id: service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+        scalable_dimension: ecs:service:DesiredCount
+        policy_type: "{{ bb_ussd_service_autoscalling_policy_type }}"
+        minimum_tasks: "{{ bb_ussd_service_autoscalling_min_task }}"
+        maximum_tasks: "{{ bb_ussd_service_autoscalling_max_task }}"
+        target_tracking_scaling_policy_configuration:
+          TargetValue: "{{ bb_ussd_service_mem_autoscalling_tracking_scaling_target_value }}"
+          PredefinedMetricSpecification:
+            PredefinedMetricType: "{{ bb_ussd_service_mem_autoscalling_tracking_scaling_metric_spec }}"
+          ScaleOutCooldown: "{{ bb_ussd_service_mem_autoscalling_tracking_scalout_cooldown }}"
+          ScaleInCooldown: "{{ bb_ussd_service_mem_autoscalling_tracking_scalin_cooldown }}"
+
+    - name: USSD Server || Creating USSD Server CPU Scalling Policy for {{ global_var_environment }}
+      aws_application_scaling_policy:
+        state: present
+        policy_name: "{{ bb_ussd_service_cpu_autoscalling_policy_name }}"
+        service_namespace: ecs
+        region: "{{ bb_active_region }}"
+        resource_id: service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+        scalable_dimension: ecs:service:DesiredCount
+        policy_type: "{{ bb_ussd_service_autoscalling_policy_type }}"
+        minimum_tasks: "{{ bb_ussd_service_autoscalling_min_task }}"
+        maximum_tasks: "{{ bb_ussd_service_autoscalling_max_task }}"
+        target_tracking_scaling_policy_configuration:
+          TargetValue: "{{ bb_ussd_service_cpu_autoscalling_tracking_scaling_target_value }}"
+          PredefinedMetricSpecification:
+            PredefinedMetricType: "{{ bb_ussd_service_cpu_autoscalling_tracking_scaling_metric_spec }}"
+          ScaleOutCooldown: "{{ bb_ussd_service_cpu_autoscalling_tracking_scalout_cooldown }}"
+          ScaleInCooldown: "{{ bb_ussd_service_cpu_autoscalling_tracking_scalin_cooldown }}"
+
+
+
+    # - name: ussd || Creating a Sleep Time scheduled application autoscalling for ussd
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-off-time
+    #       --schedule "cron({{ bb_ussd_service_sleep_cron | default('00 20 ? * MON-FRI *') }})"
+    #       --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_ussd_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+    #       --region {{ bb_active_region }}
+    #       --profile {{ lookup('env','AWS_PROFILE') }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - not global_awx_ad_hoc_shell_switch
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)   
+    #     - global_auto_turnoff  
+
+    # - name: ussd Server || Creating a Sleep Time scheduled application autoscalling for ussd with awscli
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-off-time
+    #       --schedule "cron({{ bb_ussd_service_sleep_cron | default('00 20 ? * MON-FRI *') }})"
+    #       --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_sleep_autoscalling_min_task | default(0) }},MaxCapacity={{ bb_ussd_service_scheduled_sleep_autoscalling_max_task | default(0) }}
+    #       --region {{ bb_active_region }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - global_awx_ad_hoc_shell_switch
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)
+    #     - global_auto_turnoff        
+    #   environment:
+    #     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+    #     AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}" 
+
+    # - name: ussd || Creating a Wake Time scheduled application autoscalling for ussd
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-wake-time
+    #       --schedule "cron({{ bb_ussd_service_wake_cron | default('00 08 ? * MON-FRI *') }})"
+    #       --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_max_task | default(1) }}
+    #       --region {{ bb_active_region }}
+    #       --profile {{ lookup('env','AWS_PROFILE') }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - not global_awx_ad_hoc_shell_switch
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)  
+    #     - global_auto_turnoff          
+
+    # - name: ussd Server || Creating a Wake Time scheduled application autoscalling for ussd with awscli
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-{{ bb_ussd_service_name }}-wake-time
+    #       --schedule "cron({{ bb_ussd_service_wake_cron | default('00 08 ? * MON-FRI *') }})"
+    #       --scalable-target-action MinCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_min_task | default(1) }},MaxCapacity={{ bb_ussd_service_scheduled_wake_autoscalling_max_task | default(1) }}
+    #       --region {{ bb_active_region }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - global_awx_ad_hoc_shell_switch
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)
+    #     - global_auto_turnoff        
+    #   environment:
+    #     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+    #     AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}" 
+
+
+    # - name: USSD Server || Creating a Sleep Time scheduled application autoscalling for USSD
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-off-time
+    #       --schedule "cron(0 12 * * ? *)"
+    #       --scalable-target-action MinCapacity=0,MaxCapacity=0
+    #       --region {{ bb_active_region }}
+    #       --profile {{ lookup('env','AWS_PROFILE') }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - not global_awx_ad_hoc_shell_switch 
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)
+    #     - global_auto_turnoff          
+
+    # - name: USSD Server || Creating a Sleep Time scheduled application autoscalling for USSD with awscli
+    #   shell: > 
+    #       aws application-autoscaling put-scheduled-action --service-namespace ecs
+    #       --scalable-dimension ecs:service:DesiredCount
+    #       --resource-id service/{{ global_var_ecs_clustername }}/{{ bb_ussd_service_name }}
+    #       --scheduled-action-name scheduled-gh-office-off-time
+    #       --schedule "cron(0 12 * * ? *)"
+    #       --scalable-target-action MinCapacity=0,MaxCapacity=0
+    #       --region {{ bb_active_region }}
+    #   when:
+    #     - global_awx_ad_hoc_shell_switch is defined
+    #     - global_awx_ad_hoc_shell_switch
+    #     - bb_ussd_service_scheduled_autoscalling | default(false)
+    #     - global_auto_turnoff        
+    #   environment:
+    #     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key }}"
+    #     AWS_SECRET_ACCESS_KEY: "{{ vault_aws_access_secret }}" 

@@ -1,0 +1,19 @@
+---
+- name: Importing Fact Gatherer Playbook
+  import_playbook: fact_gatherer_playbook.yml
+  tags:
+  - facts
+
+- hosts: "tag_Name_main_billbox_test_proxy"
+  roles:
+    - util
+    - webserver_family
+    - elasticbeats
+    - monitoring_family
+  become: true
+  gather_facts: true
+  user: "{{ global_var_ubuntu_user }}"
+  vars_files:
+    - "playbook_vars/{{ global_var_environment }}/proxy_nginx_main_vars.yml"
+    - "playbook_vars/{{ global_var_environment }}/vault/{{ global_var_environment }}_variables.vault"
+    - "playbook_vars/{{ global_var_environment }}/global_vars.yml"

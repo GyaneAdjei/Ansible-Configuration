@@ -1,0 +1,102 @@
+
+          keycloakproxy:
+            image: "docker.io/dreamoval/billbox-nginx:dev-34"
+            environment:
+              NGINX_LISTEN_PORT: "443"    
+              NGINX_SERVER_HOSTNAME: "billboxauth.doersops.com"    
+              TEMPLATE_CONF_FILE: "rp_ssl_without_method_restriction.conf.template"    
+              NGINX_PROXY_PASS: "localhost:8080"    
+              NGINX_ALLOW_SUBNET: "172.21.0.0/16"    
+              NGINX_SSL_KEY_FILE: "star_doersops_com.key"    
+              NGINX_SSL_CERT_FILE: "star_doersops_com_bundle.crt"
+              NGINX_PROXY_PORT: "8080" 
+            ports:
+             - 443:443   
+          keycloakserver:
+            image: docker.io/jboss/keycloak:16.1.1
+            environment:
+              JAVA_OPTS: "-XX:MaxRAM=2147483648 -XX:MinRAMPercentage=40.0 -XX:MaxRAMPercentage=90.0 -XX:+HeapDumpOnOutOfMemoryError -Djboss.as.management.blocking.timeout=900 -Djava.net.preferIPv4Stack=true -Djboss.https.port=443"
+              DB_VENDOR: mysql  
+              DB_ADDR: "uat_billbox_RDS_DB_ADDR"    
+              DB_DATABASE: "uat_billbox_RDS_DB_DATABASE"    
+              DB_USER: "uat_billbox_RDS_DB_USER"    
+              DB_PASSWORD: "uat_billbox_RDS_DB_PASSWORD"    
+              DB_PORT: "uat_billbox_RDS_DB_PORT"    
+              JDBC_PARAMS: useSSL=false&autoReconnect=true&maxReconnects=12  
+              KEYCLOAK_USER: "uat_billbox_KEYCLOAK_USER"  
+              KEYCLOAK_PASSWORD: "uat_billbox_KEYCLOAK_PASSWORD"    
+              PROXY_ADDRESS_FORWARDING: "true"  
+              JGROUPS_DISCOVERY_PROTOCOL: JDBC_PING  
+              KEYCLOAK_LOGLEVEL: INFO  
+              ROOT_LOGLEVEL: INFO  
+              KEYCLOAK_FRONTEND_URL: https://billboxauth.doersops.com/auth  
+              CACHE_OWNERS_COUNT: 1  
+              CACHE_OWNERS_AUTH_SESSIONS_COUNT: 1
+              JGROUPS_DISCOVERY_PROPERTIES: datasource_jndi_name=java:jboss/datasources/KeycloakDS,info_writer_sleep_time=500,remove_old_coords_on_view_change=true  
+              DD_API_KEY: "uat_billbox_DD_API_KEY"
+            ports:
+             - 8080:8080                  
+          securecoreserver:
+            image: "docker.io/dreamoval/billbox-core:feature-2.1.4-keycloak.311"
+            environment:
+              BB_APP_CONTEXROOT: "https://billboxsecurecore.doersops.com"    
+              BB_APP_IMAGEROOT: "https://d4lubfpts333i.cloudfront.net"    
+              BB_APP_MAIN_PORT: "uat_billbox_SECURE_BB_APP_MAIN_PORT"
+              BB_APP_INT_PORT: "uat_billbox_SECURE_BB_APP_INT_PORT"
+              BB_MONGO_DBNAME: "uat_billbox_SECURE_BB_MONGO_DBNAME"
+              BB_MONGO_REPL_LIST: "uat_billbox_SECURE_BB_MONGO_REPL_LIST"
+              BB_MONGO_USERNAME: "uat_billbox_SECURE_BB_MONGO_USERNAME"
+              BB_MONGO_PASSWORD: "uat_billbox_SECURE_BB_MONGO_PASSWORD"
+              BB_MONGO_URI: "uat_billbox_SECURE_BB_MONGO_URI"
+              BB_REDIS_HOST: "uat_billbox_SECURE_BB_REDIS_HOST"
+              BB_REDIS_PORT: "uat_billbox_SECURE_BB_REDIS_PORT"
+              BB_APP_PROXY_NAME: "billboxsecurecore.doersops.com"    
+              BB_APP_PROXY_PORT: "443"    
+              BB_APP_DOWNLOAD_PATH: "https://d4lubfpts333i.cloudfront.net/download/"    
+              FULL_GIT_URL: "https://xxxxgit.doersops.com/smartgrid-properties/billbox_integration_files.git"    
+              BB_APP_DATA_SHARE: "/opt/repo"    
+              BB_APP_IMAGE_PATH: "https://d4lubfpts333i.cloudfront.net/static/images/"    
+              BB_APP_KAFKA_BOOSTRAP: "b-3.main-billbox-uat-kafka.nt51zg.c4.kafka.eu-west-1.amazonaws.com:9092,b-1.main-billbox-uat-kafka.nt51zg.c4.kafka.eu-west-1.amazonaws.com:9092,b-2.main-billbox-uat-kafka.nt51zg.c4.kafka.eu-west-1.amazonaws.com:9092"    
+              BB_USE_FORWARD_HEADERS: "false"    
+              BB_APP_S3_BUCKET: "public.uat.usebillbox.com"    
+              BB_KEYCLOAK_CLIENT_PUBLIC: "true"    
+              BB_APP_S3_ENDPOINTURL: "https://s3-eu-west-1.amazonaws.com"    
+              BB_MAX_LOGIN_ATTEMPT: "3"    
+              BB_APP_S3_CDN: "True"    
+              BB_SESSION_TIMEOUT: "15"    
+              BB_KEYCLOAK_ENABLE_BASIC_AUTH: "true"    
+              BB_AUTH_CACHE_TTL: "10"    
+              BB_KEYCLOAK_HOME: "https://billboxauth.doersops.com"    
+              BB_KEYCLOAK_AUTH_URL: "https://billboxauth.doersops.com/auth"    
+              BB_SETTLEMENT_WEEKEND_ENABLE: "True"    
+              BB_OWASP_RESC: "classpath:*.properties"
+              BB_KEYCLOAK_REALM: "uat_billbox_SECURE_BB_KEYCLOAK_REALM"
+              BB_KEYCLOAK_CLIENT_ID: "uat_billbox_SECURE_BB_KEYCLOAK_CLIENT_ID"
+              BB_KEYCLOAK_CLIENT_SECRET: "uat_billbox_SECURE_BB_KEYCLOAK_CLIENT_SECRET"
+              BB_KEYCLOAK_PRINCIPAL_ATTRIBUTE: preferred_username
+              BB_KEYCLOAK_MANAGER_USER: "uat_billbox_SECURE_BB_KEYCLOAK_MANAGER_USER"
+              BB_KEYCLOAK_MANAGER_PASSWORD: "uat_billbox_SECURE_BB_KEYCLOAK_MANAGER_PASSWORD"
+              BB_KEYCLOAK_CLIENTS_ADMIN: "uat_billbox_SECURE_BB_KEYCLOAK_CLIENTS_ADMIN"
+              BB_KEYCLOAK_CLIENTS_BILLER: "uat_billbox_SECURE_BB_KEYCLOAK_CLIENTS_BILLER"
+              BB_KEYCLOAK_CLIENTS_INTEGRATOR: "uat_billbox_SECURE_BB_KEYCLOAK_CLIENTS_INTEGRATOR"
+              JAVA_OPTS: "-Xmx5120M -XX:PermSize=256m -XX:MaxPermSize=1024M -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:+UseCMSInitiatingOccupancyOnly -XX:CMSInitiatingOccupancyFraction=70 -XX:+ScavengeBeforeFullGC -XX:+CMSScavengeBeforeRemark -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=100M -Dsun.net.inetaddr.ttl=300 -Djava.rmi.server.hostname=localhost -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=13000 -Dcom.sun.management.jmxremote.ssl=False -Dcom.sun.management.jmxremote.authenticate=False -Dhttps.protocols=TLSv1.2,TLSv1.3 -Djdk.tls.client.protocols=TLSv1.2,TLSv1.3 -DLOGENTRIES_TOKEN=6826d0ea-d9dd-48e6-a070-a5e2c5d2a05e -Dauth.attempt.cache.duration.mins=10 -Dserver.use-forward-headers=false -Ddd.agent.host=localhost -Ddd.agent.port=8126 -Ddd.logs.injection=true -Ddd.service=main-billbox-uat-securecoreserver-service -Ddd.env=uat -Ddd.version=feature-2.1.4-keycloak.311"    
+              BB_APP_ELK_URL: "https://vpc-main-billbox-uat-elk-gui4wyyzljmt7dv2p3rexnj36a.eu-west-1.es.amazonaws.com"    
+            ports: 
+              - 8080:8080
+              - 9595:9595
+              - 9191:9191
+          securecoreproxy:
+            image: "docker.io/dreamoval/billbox-nginx:dev-34"
+            environment: 
+              NGINX_PROXY_PORT: "8080"
+              NGINX_PROXY_PASS: "localhost:8080"
+              NGINX_SSL_KEY_FILE: "star_doersops_com.key"
+              NGINX_LISTEN_PORT: "443"
+              NGINX_ALLOW_SUBNET: "172.21.0.0/16"
+              NGINX_SERVER_HOSTNAME: "billboxsecurecore.doersops.com"
+              NGINX_SSL_CA_FILE: "BillboxROOTCA.crt"
+              TEMPLATE_CONF_FILE: "rp_core_generic_ssl.conf.template"
+              NGINX_SSL_CERT_FILE: "star_doersops_com_bundle.crt"
+            ports:
+             - 443:443
+          
